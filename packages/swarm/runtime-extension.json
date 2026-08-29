@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "identity": "@marshal/swarm",
+  "version": "0.1.0",
+  "entrypoint": "dist/extension.cjs",
+  "moduleFormat": "commonjs-bundle-v1",
+  "configuration": {
+    "schema": {
+      "type": "object",
+      "properties": { "runsDirectory": { "type": "string", "minLength": 1 } },
+      "required": ["runsDirectory"],
+      "additionalProperties": false
+    }
+  },
+  "contributes": {
+    "capabilities": ["swarm.runs."],
+    "ui": ["swarm-run"]
+  }
+}

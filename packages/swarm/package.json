@@ -1,0 +1,48 @@
+{
+  "name": "@marshal/swarm",
+  "version": "0.1.0",
+  "description": "Minimal event-sourced recursive swarm executor for Marshal runtimes",
+  "type": "commonjs",
+  "main": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./presentation": {
+      "types": "./dist/presentation.d.ts",
+      "import": "./dist/presentation.mjs",
+      "require": "./dist/presentation.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "runtime-extension.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.mjs && esbuild src/index.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/index.cjs && esbuild src/presentation.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/presentation.mjs && esbuild src/presentation.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/presentation.cjs && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/extension.cjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "verify": "pnpm typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@marshal/runtime": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.5",
+    "esbuild": "0.27.7",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "license": "MIT"
+}

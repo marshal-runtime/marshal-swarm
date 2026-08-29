@@ -1,0 +1,28 @@
+{
+  "name": "@marshal/swarm-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Standalone repository for the optional @marshal/swarm runtime composition package",
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "typecheck": "pnpm --filter @marshal/swarm typecheck",
+    "build": "pnpm --filter @marshal/swarm build",
+    "test": "pnpm --filter @marshal/swarm test",
+    "verify": "pnpm --filter @marshal/swarm verify"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.5",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "@marshal/runtime": "link:../../packages/runtime"
+    }
+  },
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "license": "MIT"
+}
