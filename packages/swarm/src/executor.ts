@@ -26,6 +26,8 @@ import {
   type SwarmBaseline,
   type SwarmSharedContext,
 } from './services.js';
+import { createSwarmRunId } from './run-id.js';
+import { publishSwarmRunView } from './view-publish.js';
 import type {
   SwarmRunCancelInput,
   SwarmRunCreateInput,
@@ -102,6 +104,8 @@ export class SwarmExecutor {
   private readonly serviceContainer: SwarmServiceContainer;
   private stateTransition = Promise.resolve();
   private readonly driveInFlight = new Map<string, Promise<SwarmRun>>();
+  private readonly reuseCallerSessions = new Set<string>();
+  private readonly viewInvocations = new Map<string, InvocationContext>();
 
   constructor(
     private readonly factory: SwarmExecutionContext,
@@ -113,11 +117,15 @@ export class SwarmExecutor {
 
   async create(
     input: SwarmRunCreateInput,
-    _invocation: InvocationContext,
+    invocation: InvocationContext,
   ): Promise<SwarmRun> {
-    const runId = requiredString(input.runId, 'runId');
     const objective = requiredString(input.objective, 'objective');
-    const scope = requiredString(input.scope, 'scope');
+    const scope = requiredString(
+      input.scope ?? callerWorkspace(invocation),
+      'scope',
+    );
+    const runId = optionalString(input.runId, 'runId')
+      ?? createSwarmRunId(callerSessionId(invocation));
     const targetRef = optionalTrimmed(input.targetRef, 'targetRef');
     const targetHead = optionalTrimmed(input.targetHead, 'targetHead');
     const targets = input.targets === undefined
@@ -134,6 +142,8 @@ export class SwarmExecutor {
       objective,
       scope,
     };
+    if (input.fresh !== true) this.reuseCallerSessions.add(runId);
+    this.viewInvocations.set(runId, invocation);
     await this.options.eventStore.create(
       runId,
       objective,
@@ -165,6 +175,7 @@ export class SwarmExecutor {
     invocation: InvocationContext,
   ): Promise<SwarmRun> {
     const runId = requiredString(input.runId, 'runId');
+    this.viewInvocations.set(runId, invocation);
     const reason = requiredString(input.reason, 'reason');
     let rootDelegationId: string | undefined;
     const run = await this.withStateTransition(async () => {
@@ -186,8 +197,10 @@ export class SwarmExecutor {
     input: SwarmRunPauseInput,
     invocation: InvocationContext,
   ): Promise<SwarmRun> {
+    const runId = requiredString(input.runId, 'runId');
+    this.viewInvocations.set(runId, invocation);
     return this.pauseRun(
-      requiredString(input.runId, 'runId'),
+      runId,
       {
         kind: 'manual',
         message: requiredString(input.reason, 'reason'),
@@ -201,6 +214,7 @@ export class SwarmExecutor {
     invocation: InvocationContext,
   ): Promise<SwarmRun> {
     const runId = requiredString(input.runId, 'runId');
+    this.viewInvocations.set(runId, invocation);
     let resumed = false;
     const run = await this.withStateTransition(async () => {
       const current = await this.requireRun(runId);
@@ -220,6 +234,7 @@ export class SwarmExecutor {
     invocation: InvocationContext,
   ): Promise<SwarmRun> {
     const runId = requiredString(input.runId, 'runId');
+    this.viewInvocations.set(runId, invocation);
     const existing = this.driveInFlight.get(runId);
     if (existing !== undefined) return existing;
     let drive!: Promise<SwarmRun>;
@@ -619,6 +634,7 @@ export class SwarmExecutor {
             ?? DEFAULT_WORKER_REASONING_EFFORT,
         }
       : serviceRoleModel;
+    const callerSession = optionalCallerSessionId(invocation);
     const spawned = await this.delegationCall(
       'runtime.delegation.spawn',
       {
@@ -634,6 +650,11 @@ export class SwarmExecutor {
           : { reasoningEffort: roleModel.reasoningEffort }),
         ...(parentDelegationId === undefined ? {} : { parentDelegationId }),
         ...(baseline?.head === undefined ? {} : { baseRef: baseline.head }),
+        ...(this.reuseCallerSessions.has(runId)
+          && task.parentTaskId === undefined
+          && callerSession
+          ? { backend: callerSession }
+          : {}),
       },
       invocation,
     );
@@ -827,6 +848,14 @@ export class SwarmExecutor {
     for (const event of events) {
       await this.options.eventStore.append(runId, event);
     }
+    await this.publishView(runId);
+  }
+
+  private async publishView(runId: string): Promise<void> {
+    const invocation = this.viewInvocations.get(runId);
+    if (!invocation) return;
+    await publishSwarmRunView(await this.requireRun(runId), invocation, (request, context) =>
+      this.factory.execute(request, context));
   }
 
   private async stopped(runId: string): Promise<boolean> {
@@ -1546,6 +1575,24 @@ function requiredString(
     throw new TypeError(`${label} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+function callerSessionId(invocation: InvocationContext): string {
+  const sessionId = optionalCallerSessionId(invocation);
+  if (!sessionId) throw new TypeError('Swarm create requires a session scope.');
+  return sessionId;
+}
+
+function optionalCallerSessionId(invocation: InvocationContext): string | undefined {
+  const sessionId = invocation.scope?.sessionId?.trim();
+  return sessionId || undefined;
+}
+
+function callerWorkspace(invocation: InvocationContext): string | undefined {
+  const metadata = invocation.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+  const name = (metadata as { marshalWorkspaceName?: unknown }).marshalWorkspaceName;
+  return typeof name === 'string' && name.trim() ? name.trim() : undefined;
 }
 
 function optionalString(value: unknown, label: string): string | undefined {

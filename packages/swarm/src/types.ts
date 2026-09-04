@@ -5,9 +5,10 @@ import type { SwarmRunEventStore } from './store.js';
 import type { SwarmServiceContainer } from './service-container.js';
 
 export interface SwarmRunCreateInput {
-  readonly runId: string;
+  readonly runId?: string;
   readonly objective: string;
-  readonly scope: string;
+  readonly scope?: string;
+  readonly fresh?: boolean;
   readonly targetRef?: string;
   readonly targetHead?: string;
   readonly targets?: readonly SwarmRunTarget[];

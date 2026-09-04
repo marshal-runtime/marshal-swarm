@@ -502,6 +502,49 @@ describe('SwarmExecutor', () => {
     ]);
   });
 
+  it.each([undefined, false])(
+    'attaches the caller session as the root planner when fresh is %s',
+    async (fresh) => {
+      const agents = new ScriptedDelegation(({ taskId, call }) => {
+        if (taskId === 'root' && call === 1) return result('done');
+        throw new Error(`Unexpected task ${taskId} call ${call}.`);
+      });
+      const scoped: InvocationContext = {
+        ...invocation,
+        scope: { sessionId: 'owner-session' },
+      };
+      const executor = createExecutor(agents);
+      await executor.create({
+        runId: 'reuse-run',
+        objective: 'Keep this chat',
+        scope: 'repository',
+        ...(fresh === undefined ? {} : { fresh }),
+      }, scoped);
+      await executor.drive({ runId: 'reuse-run' }, scoped);
+      expect(agents.spawnInputs[0]).toMatchObject({ backend: 'owner-session' });
+    },
+  );
+
+  it('starts a separate root planner when fresh is true', async () => {
+    const agents = new ScriptedDelegation(({ taskId, call }) => {
+      if (taskId === 'root' && call === 1) return result('done');
+      throw new Error(`Unexpected task ${taskId} call ${call}.`);
+    });
+    const scoped: InvocationContext = {
+      ...invocation,
+      scope: { sessionId: 'owner-session' },
+    };
+    const executor = createExecutor(agents);
+    await executor.create({
+      runId: 'fresh-run',
+      objective: 'Start fresh',
+      scope: 'repository',
+      fresh: true,
+    }, scoped);
+    await executor.drive({ runId: 'fresh-run' }, scoped);
+    expect(agents.spawnInputs[0]).not.toHaveProperty('backend');
+  });
+
   it('normalizes only non-object JSON-safe responses as result envelopes', () => {
     expect(parseAgentResponse({ result: 'direct' })).toEqual({
       result: 'direct',
@@ -833,6 +876,21 @@ class ScriptedDelegation {
     target: string,
     inputValue: unknown,
   ): Promise<RuntimeExecResponse> {
+    if (target.startsWith('ui.')) {
+      return response({
+        ok: true,
+        value: {
+          receipt: {
+            receiptId: 'ui',
+            action: 'list',
+            status: 'applied',
+            completedAt: 't',
+            revision: 1,
+          },
+          instances: [],
+        },
+      });
+    }
     const input = inputValue as Readonly<Record<string, unknown>>;
     const delegationRecord = (delegationId: string) => {
       const pending = this.pending.get(delegationId)!;
@@ -857,7 +915,7 @@ class ScriptedDelegation {
       assertExactInput(
         input,
         ['prompt', 'role', 'scope', 'workspaceMode'],
-        ['baseRef', 'model', 'parentDelegationId', 'reasoningEffort'],
+        ['baseRef', 'backend', 'model', 'parentDelegationId', 'reasoningEffort'],
       );
       this.spawnInputs.push(input);
       const prompt = input.prompt as string;
