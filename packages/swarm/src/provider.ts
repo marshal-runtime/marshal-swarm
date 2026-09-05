@@ -118,6 +118,9 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
     objectSchema({
       runId: IDENTIFIER,
       objective: { type: 'string', minLength: 1 },
+      argument: { type: 'string', minLength: 1 },
+      fresh: { type: 'boolean' },
+      sessionId: IDENTIFIER,
       scope: { type: 'string', minLength: 1 },
       targetRef: { type: 'string', minLength: 1 },
       targetHead: { type: 'string', minLength: 1 },
@@ -132,7 +135,7 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
       },
       workerModel: { type: 'string', minLength: 1 },
       workerReasoningEffort: { type: 'string', minLength: 1 },
-    }, ['runId', 'objective', 'scope']),
+    }, []),
     RUN_OUTPUT,
   ),
   descriptor(SWARM_RUNS_GET, 'Get a swarm run', RUN_INPUT, RUN_OUTPUT, true),
@@ -202,10 +205,14 @@ function descriptor(
 function parseCreateInput(
   input: Readonly<Record<string, unknown>>,
 ): SwarmRunCreateInput {
+  const objective = input.objective === undefined
+    ? requiredString(input.argument, 'objective')
+    : requiredString(input.objective, 'objective');
   return {
-    runId: requiredString(input.runId, 'runId'),
-    objective: requiredString(input.objective, 'objective'),
-    scope: requiredString(input.scope, 'scope'),
+    objective,
+    ...(input.runId === undefined ? {} : { runId: requiredString(input.runId, 'runId') }),
+    ...(input.scope === undefined ? {} : { scope: requiredString(input.scope, 'scope') }),
+    ...(input.fresh === undefined ? {} : { fresh: requiredBoolean(input.fresh, 'fresh') }),
     ...(input.targetRef === undefined
       ? {}
       : { targetRef: requiredString(input.targetRef, 'targetRef') }),
@@ -282,6 +289,13 @@ function requiredString(value: unknown, label: string): string {
     throw new TypeError(`${label} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+function requiredBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${label} must be a boolean.`);
+  }
+  return value;
 }
 
 function objectSchema(
