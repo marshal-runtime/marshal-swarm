@@ -19,19 +19,27 @@ export interface SwarmRunOutcomeSummary {
   readonly taskCounts: Readonly<Partial<Record<SwarmTaskState, number>>>;
   readonly totalTasks: number;
   readonly failedTasks: readonly SwarmFailedTaskIdentity[];
+  /** Count of failed tasks beyond the bounded identity list; total failed = failedTasks.length + this. */
+  readonly failedTasksOmitted?: number;
   /** Present only for terminal run states; factual state readback, no success claim. */
   readonly headline?: string;
 }
 
 const OBJECTIVE_LIMIT = 160;
 const REASON_LIMIT = 256;
+/** The listed identities stay bounded; the true count lives in taskCounts.failed. */
+const FAILED_TASK_LIST_LIMIT = 20;
 
 export function summarizeRunOutcome(run: SwarmRun): SwarmRunOutcomeSummary {
   const taskCounts: Partial<Record<SwarmTaskState, number>> = {};
   const failedTasks: SwarmFailedTaskIdentity[] = [];
+  let failedTotal = 0;
+  // run.tasks is event-ordered, so the projection is deterministic for a given run state.
   for (const task of run.tasks) {
     taskCounts[task.state] = (taskCounts[task.state] ?? 0) + 1;
     if (task.state !== "failed") continue;
+    failedTotal += 1;
+    if (failedTasks.length >= FAILED_TASK_LIST_LIMIT) continue;
     failedTasks.push({
       taskId: task.taskId,
       role: task.role,
@@ -39,11 +47,12 @@ export function summarizeRunOutcome(run: SwarmRun): SwarmRunOutcomeSummary {
       ...(failureReason(task) ? { reason: failureReason(task) } : {}),
     });
   }
-  const headline = terminalHeadline(run.state, run.tasks.length, taskCounts.completed ?? 0, failedTasks.length);
+  const headline = terminalHeadline(run.state, run.tasks.length, taskCounts.completed ?? 0, failedTotal);
   return {
     taskCounts,
     totalTasks: run.tasks.length,
     failedTasks,
+    ...(failedTotal > failedTasks.length ? { failedTasksOmitted: failedTotal - failedTasks.length } : {}),
     ...(headline ? { headline } : {}),
   };
 }

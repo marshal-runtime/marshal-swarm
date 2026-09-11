@@ -115,6 +115,9 @@ function OutcomeSummary({ run }: { readonly run: SwarmRun }) {
               Failed — {failed.role}: {failed.objective}{failed.reason ? ` (${failed.reason})` : ""}
             </li>
           ))}
+          {(outcome.failedTasksOmitted ?? 0) > 0 && (
+            <li className="swarm-line">…and {outcome.failedTasksOmitted} more failed task{outcome.failedTasksOmitted === 1 ? "" : "s"}.</li>
+          )}
         </ul>
       )}
     </div>

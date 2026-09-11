@@ -81,6 +81,22 @@ describe("summarizeRunOutcome", () => {
     expect(failed.reason!.endsWith("…")).toBe(true);
   });
 
+  it("bounds the failed-identity list deterministically while the headline keeps the true count", () => {
+    const failures = Array.from({ length: 27 }, (_, index) =>
+      task({ taskId: `f${String(index).padStart(2, "0")}`, state: "failed", reason: `reason ${index}` }));
+    const summary = summarizeRunOutcome(run("completed", [
+      task({ taskId: "root", role: "planner", state: "completed" }),
+      ...failures,
+    ]));
+    expect(summary.failedTasks).toHaveLength(20);
+    // Deterministic: event order of the task array, first 20.
+    expect(summary.failedTasks[0]!.taskId).toBe("f00");
+    expect(summary.failedTasks[19]!.taskId).toBe("f19");
+    expect(summary.failedTasksOmitted).toBe(7);
+    expect(summary.taskCounts.failed).toBe(27);
+    expect(summary.headline).toBe("Execution completed with 27 failed tasks (1 of 28 completed).");
+  });
+
   it("rides the view projection as a derived field and survives the JSON round trip", () => {
     const projected = projectSwarmRunView(run("completed", [
       task({ taskId: "root", role: "planner", state: "completed" }),
