@@ -1,6 +1,6 @@
 import type { InvocationContext, RuntimeExecResponse } from '@marshal/runtime';
 import type { RuntimeOperationExecuteRequest } from '@marshal/runtime/core';
-import type { SwarmRunTarget } from './contracts.js';
+import type { SwarmRunTarget, SwarmRoleModels } from './contracts.js';
 import type { SwarmRunEventStore } from './store.js';
 import type { SwarmServiceContainer } from './service-container.js';
 
@@ -14,6 +14,7 @@ export interface SwarmRunCreateInput {
   readonly targets?: readonly SwarmRunTarget[];
   readonly workerModel?: string;
   readonly workerReasoningEffort?: string;
+  readonly roleModels?: SwarmRoleModels;
 }
 
 export interface SwarmRunInput {
@@ -23,6 +24,18 @@ export interface SwarmRunInput {
 export interface SwarmRunPauseInput {
   readonly runId: string;
   readonly reason: string;
+}
+export interface SwarmRunSetRoleModelsInput extends SwarmRunInput {
+  readonly roleModels: SwarmRoleModels;
+  readonly reason: string;
+}
+
+export interface SwarmRunRecoverSystemFailureInput extends SwarmRunInput {
+  readonly reason: string;
+  readonly classification: "owner-session-busy-transport" | "owner-session-superseded-transport";
+  /** One-based positions of the exact adjacent failure events at the journal tail. */
+  readonly expectedTaskFailureIndex: number;
+  readonly expectedRunFailureIndex: number;
 }
 
 export interface SwarmRunCancelInput {

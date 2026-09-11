@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import * as url from 'node:url';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import path from 'node:path';
@@ -29,7 +30,7 @@ describe('packed Runtime extension', () => {
     };
     const loaded = new LocalRuntimeExtensionPackageLoader({
       allowedRoots: [root],
-      modules: { 'node:path': path, 'node:fs/promises': fsPromises, 'node:crypto': crypto },
+      modules: { 'node:path': path, 'node:fs/promises': fsPromises, 'node:crypto': crypto, 'node:url': url },
     }).load(request);
     const activation = await loaded.module.activate({
       manifest: loaded.metadata.manifest,

@@ -14,11 +14,12 @@ scope, and parents resume with plain child outcomes and each immediate child's
 own change references. Runtime owns the generic extension lifecycle while Swarm
 owns its run event store and replay model.
 
-The provider exposes seven operations: `swarm.runs.create`, `swarm.runs.get`,
-`swarm.runs.list`, `swarm.runs.cancel`, `swarm.runs.pause`,
-`swarm.runs.resume`, and `swarm.runs.drive`. Agents need JSON only when a
-planner delegates with a non-empty `children` array; any other JSON-safe output
-completes the current task.
+The provider exposes run controls, explicit `swarm.nodes.*` task lifecycle
+operations, and paginated evidence reads. Agents with the same owner identity
+and a valid session may inspect other agents' full Swarm trees, including
+paused, blocked, and historical work. This read access does not grant mutation
+rights: run controls remain root-owner-only and task writes remain scoped to
+the owning task. See the package's [read-access API](packages/swarm/README.md#read-access-and-paginated-evidence).
 
 The published package contains `runtime-extension.json` and a bundled
 `dist\extension.cjs` entrypoint. A generic `RuntimeExtensionManager` discovers,
@@ -40,7 +41,7 @@ directory writable by the host, for example
 `C:\Users\me\AppData\Local\Marshal\swarm`. Discovery does not install, enable,
 activate, or execute the extension.
 
-When enabled, Swarm contributes the seven `swarm.runs.*` capabilities and the
+When enabled, Swarm contributes `swarm.runs.*` and `swarm.nodes.*` capabilities and the
 `swarm-run` UI application. The UI presents run/task state and pause/resume
 controls; opening agent sessions remains a host action.
 

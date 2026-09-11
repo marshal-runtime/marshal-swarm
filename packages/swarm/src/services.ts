@@ -1,3 +1,4 @@
+import type { InvocationContext } from '@marshal/runtime';
 import type { SwarmRun, SwarmTaskRole } from './contracts.js';
 import {
   getSwarmServiceContainer,
@@ -87,4 +88,27 @@ export function tryGetSwarmBaselineService(
   return container.tryGet<SwarmBaselineService>(
     SwarmServiceSymbols.baseline,
   );
+}
+
+export interface SwarmEvidenceReadResult {
+  readonly uri: string;
+  readonly text: string;
+  readonly truncated: boolean;
+  readonly nextOffset?: number;
+}
+
+export interface SwarmTranscriptReadInput {
+  readonly sessionId: string;
+  readonly uri: string;
+  readonly offset?: number;
+}
+
+export interface SwarmTranscriptReaderService {
+  read(input: SwarmTranscriptReadInput, invocation: InvocationContext): Promise<SwarmEvidenceReadResult>;
+}
+
+export function tryGetSwarmTranscriptReaderService(
+  container: SwarmServiceContainer = getSwarmServiceContainer(),
+): SwarmTranscriptReaderService | undefined {
+  return container.tryGet<SwarmTranscriptReaderService>(SwarmServiceSymbols.transcriptReader);
 }

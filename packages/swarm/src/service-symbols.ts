@@ -1,9 +1,12 @@
 import type { SwarmRunEventStore } from './store.js';
 import type {
   SwarmBaselineService,
+  SwarmTranscriptReaderService,
   SwarmRoleModelService,
   SwarmSharedContextService,
 } from './services.js';
+
+const transcriptReader = Symbol.for('@marshal/swarm:transcript-reader') as symbol & { readonly __type?: (value: SwarmTranscriptReaderService) => SwarmTranscriptReaderService };
 
 export const SWARM_EVENT_STORE_SERVICE_KEY = '@marshal/swarm:event-store';
 
@@ -16,6 +19,7 @@ const eventStore = Symbol.for(SWARM_EVENT_STORE_SERVICE_KEY) as symbol & {
 
 export const SwarmServiceSymbols = {
   sharedContext,
+  transcriptReader,
   roleModel,
   baseline,
   eventStore,
