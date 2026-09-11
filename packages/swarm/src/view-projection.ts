@@ -1,4 +1,7 @@
 import type { SwarmJsonValue, SwarmRun } from "./contracts.js";
+import { summarizeRunOutcome, type SwarmRunOutcomeSummary } from "./outcome-summary.js";
+
+export type SwarmRunView = SwarmRun & { readonly outcome: SwarmRunOutcomeSummary };
 
 const PURPOSE_LIMIT = 160;
 const TEXT_LIMIT = 1024;
@@ -54,9 +57,11 @@ function diagnostic(value: SwarmJsonValue | undefined): SwarmJsonValue | undefin
  * launch inputs belong in durable execution history, not UI application state.
  * Identifiers and navigation references retain their exact values.
  */
-export function projectSwarmRunView(run: SwarmRun): SwarmRun {
-  const projected: SwarmRun = {
+export function projectSwarmRunView(run: SwarmRun): SwarmRunView {
+  const projected: SwarmRunView = {
     ...run,
+    // Derived on every read from the actual task states — never stored back.
+    outcome: summarizeRunOutcome(run),
     objective: purpose(run.objective),
     ...(run.pauseReason && { pauseReason: { ...run.pauseReason, message: boundedText(run.pauseReason.message) } }),
     ...(run.result !== undefined && { result: diagnostic(run.result) }),
@@ -73,5 +78,5 @@ export function projectSwarmRunView(run: SwarmRun): SwarmRun {
     })),
   };
   // Detach retained arrays/usage records as well, without serializing launchInput.
-  return JSON.parse(JSON.stringify(projected)) as SwarmRun;
+  return JSON.parse(JSON.stringify(projected)) as SwarmRunView;
 }

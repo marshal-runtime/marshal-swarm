@@ -9,5 +9,6 @@ export * from './services.js';
 export * from './executor.js';
 export * from './provider.js';
 export * from './presentation.js';
+export * from './outcome-summary.js';
 export * from './view-publish.js';
 export * from './extension.js';

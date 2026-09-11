@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { SwarmRun, SwarmTask } from "../contracts.js";
+import type { SwarmRunOutcomeSummary } from "../outcome-summary.js";
 import { summarizeUsage, type UsageMeasurement, type UsageSummary } from "./usage-summary.js";
 import { taskPurpose, taskSession, taskStatus, taskTree } from "./task-tree.js";
 
@@ -39,6 +40,7 @@ export function SwarmRunView({ run, compact, onPause, onResume, onOpenFile, onOp
       <div className="rounded-md border border-border p-3" style={{ minWidth: 0 }}>
         <div className="flex items-center gap-2 text-xs"><Status state={run.state} /><strong>Swarm</strong><span className="text-muted-foreground">{run.tasks.length} agents</span></div>
         <h2 className="swarm-line mt-1 text-sm font-medium">{taskPurpose(run.objective)}</h2>
+        <OutcomeSummary run={run} />
       </div>
       {run.legacyReadOnly && <p className="text-xs">Legacy run · Read-only history</p>}
       {!run.legacyReadOnly && (run.state === "running" || run.state === "paused") && (
@@ -86,6 +88,35 @@ export function SwarmRunView({ run, compact, onPause, onResume, onOpenFile, onOp
         {run.error !== undefined && <p className="text-destructive">{displayJson(run.error)}</p>}
         <UsagePanel label="Run usage" summary={summarizeUsage(run.tasks.flatMap((task) => task.executions ?? []))} />
       </details>
+    </div>
+  );
+}
+
+/**
+ * Read-time outcome readback: factual task-state counts and failed-task
+ * identities from the projected run. States are execution facts — this line
+ * never claims objective success; acceptance stays with the goal reviewer.
+ * Older publishers may send runs without the derived block; render nothing then.
+ */
+function OutcomeSummary({ run }: { readonly run: SwarmRun }) {
+  const outcome = (run as { readonly outcome?: SwarmRunOutcomeSummary }).outcome;
+  if (!outcome) return null;
+  const terminal = run.state === "completed" || run.state === "failed";
+  if (!terminal && outcome.failedTasks.length === 0) return null;
+  return (
+    <div data-testid="swarm-outcome-summary">
+      {terminal && outcome.headline && (
+        <p className="swarm-line mt-1 text-xs" data-testid="swarm-outcome-headline">{outcome.headline}</p>
+      )}
+      {outcome.failedTasks.length > 0 && (
+        <ul aria-label="Failed tasks" className="mt-1 text-xs" style={{ listStyle: "none", margin: 0, padding: 0 }} data-testid="swarm-outcome-failed">
+          {outcome.failedTasks.map((failed) => (
+            <li key={failed.taskId} className="swarm-line">
+              Failed — {failed.role}: {failed.objective}{failed.reason ? ` (${failed.reason})` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
