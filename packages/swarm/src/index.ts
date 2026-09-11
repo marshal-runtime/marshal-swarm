@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './run-id.js';
 export * from './contracts.js';
 export * from './store.js';
 export * from './file-store.js';
@@ -8,4 +9,6 @@ export * from './services.js';
 export * from './executor.js';
 export * from './provider.js';
 export * from './presentation.js';
+export * from './outcome-summary.js';
+export * from './view-publish.js';
 export * from './extension.js';

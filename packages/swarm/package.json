@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Minimal event-sourced recursive swarm executor for Marshal runtimes",
   "type": "commonjs",
-  "main": "dist/index.cjs",
+  "main": "dist/extension.cjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
@@ -15,6 +15,11 @@
       "types": "./dist/presentation.d.ts",
       "import": "./dist/presentation.mjs",
       "require": "./dist/presentation.cjs"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.mjs",
+      "require": "./dist/ui/index.cjs"
     }
   },
   "files": [
@@ -24,7 +29,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.mjs && esbuild src/index.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/index.cjs && esbuild src/presentation.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/presentation.mjs && esbuild src/presentation.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/presentation.cjs && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/extension.cjs",
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.mjs && esbuild src/index.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/index.cjs && esbuild src/presentation.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/presentation.mjs && esbuild src/presentation.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/presentation.cjs && esbuild src/ui/index.ts --bundle --platform=browser --format=esm --target=es2022 --external:react --external:react/jsx-runtime --outfile=dist/ui/index.mjs && esbuild src/ui/index.ts --bundle --platform=browser --format=cjs --target=es2022 --external:react --external:react/jsx-runtime --outfile=dist/ui/index.cjs && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node24 --outfile=dist/extension.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "verify": "pnpm typecheck && pnpm test"
@@ -32,9 +37,14 @@
   "dependencies": {
     "@marshal/runtime": "0.1.0"
   },
+  "peerDependencies": {
+    "react": ">=18"
+  },
   "devDependencies": {
     "@types/node": "25.9.5",
+    "@types/react": "19.1.8",
     "esbuild": "0.27.7",
+    "react": "19.1.0",
     "typescript": "5.9.3",
     "vitest": "^3.2.4"
   },

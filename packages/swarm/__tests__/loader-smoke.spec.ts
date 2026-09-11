@@ -1,3 +1,5 @@
+import * as crypto from 'node:crypto';
+import * as url from 'node:url';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import path from 'node:path';
@@ -6,6 +8,7 @@ import {
   computeRuntimeExtensionIntegrity,
   LocalRuntimeExtensionPackageLoader,
 } from '@marshal/runtime/extensions';
+import { SWARM_RUN_VIEW_RESOURCE_URI, SWARM_SLASH_COMMAND_RESOURCE_URI } from '../src/presentation.js';
 
 describe('packed Runtime extension', () => {
   it('loads and disposes without Swarm services or configuration', async () => {
@@ -27,7 +30,7 @@ describe('packed Runtime extension', () => {
     };
     const loaded = new LocalRuntimeExtensionPackageLoader({
       allowedRoots: [root],
-      modules: { 'node:path': path, 'node:fs/promises': fsPromises },
+      modules: { 'node:path': path, 'node:fs/promises': fsPromises, 'node:crypto': crypto, 'node:url': url },
     }).load(request);
     const activation = await loaded.module.activate({
       manifest: loaded.metadata.manifest,
@@ -37,6 +40,10 @@ describe('packed Runtime extension', () => {
       execute: async () => { throw new Error('not used'); },
     });
     expect(activation.capabilityProviders).toHaveLength(1);
+    expect(activation.uiApplications?.map((application) => application.resource.uri)).toEqual([
+      SWARM_RUN_VIEW_RESOURCE_URI,
+      SWARM_SLASH_COMMAND_RESOURCE_URI,
+    ]);
     await activation.dispose?.();
     } finally {
       rmSync(root, { recursive: true, force: true });
