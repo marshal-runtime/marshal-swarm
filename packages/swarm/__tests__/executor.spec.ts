@@ -382,6 +382,7 @@ describe("explicit persistent node protocol", () => {
     expect(dispatchedPrompt).toContain(
       "An inline artifact passed to swarm.nodes.complete does not publish a reference",
     );
+    expect(dispatchedPrompt).toContain("Do not call swarm.nodes.continue to wait for children");
     const run = await executor.get({ runId: "r" });
     expect(run.state).toBe("running");
     expect(run.tasks).toHaveLength(1);
@@ -580,11 +581,12 @@ describe("explicit persistent node protocol", () => {
     await expect(
       executor.nodeOperation("block", { runId: "r", taskId: "root", reason: "" }, owner),
     ).rejects.toThrow("reason");
-    await executor.nodeOperation(
+    const blockAck: any = await executor.nodeOperation(
       "block",
       { runId: "r", taskId: "root", reason: "Needs dependency" },
       owner,
     );
+    expect(blockAck).toEqual({ taskId: "root", state: "blocked", resumeCount: 0 });
     await executor.drive({ runId: "r" }, owner);
     const blocked = (await executor.get({ runId: "r" })).tasks[0];
     expect(blocked.state).toBe("blocked");
@@ -593,11 +595,18 @@ describe("explicit persistent node protocol", () => {
     await expect(
       executor.nodeOperation("complete", { runId: "r", taskId: "root" }, owner),
     ).rejects.toThrow("running");
-    await executor.nodeOperation(
+    const resumeAck: any = await executor.nodeOperation(
       "resume",
       { runId: "r", taskId: "root", reason: "Dependency resolved" },
       owner,
     );
+    expect(resumeAck).toEqual({ taskId: "root", state: "running", resumeCount: 1 });
+    const continueAck: any = await executor.nodeOperation(
+      "continue",
+      { runId: "r", taskId: "root", reason: "Keep going" },
+      owner,
+    );
+    expect(continueAck).toEqual({ taskId: "root", state: "running", resumeCount: 2 });
   });
   it("requires planner artifact and protects completed tasks from late messages", async () => {
     const { executor } = await setup();

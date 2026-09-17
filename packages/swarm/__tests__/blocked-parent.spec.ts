@@ -92,6 +92,9 @@ it.each([false, true])(
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain('"state":"blocked"');
     expect(prompts[0]).toContain("Connection unavailable");
+    // The outstanding roster stays compact: no full objective text for live children.
+    expect(prompts[0]).not.toContain('"objective":"wait"');
+    expect(prompts[0]).toContain("fetch a child's full objective via swarm.nodes.get");
     expect(
       replaySwarmRun(await store.read("blocked")).tasks.find((t) => t.taskId === "root/waiting")
         ?.state,

@@ -91,6 +91,11 @@ export interface SwarmExecutionRecord {
     readonly reportedCost?: number;
   };
 }
+export interface SwarmNodeAck {
+  readonly taskId: string;
+  readonly state: SwarmTaskState;
+  readonly resumeCount: number;
+}
 export interface SwarmTask extends SwarmTaskDefinition {
   readonly state: SwarmTaskState;
   readonly childTaskIds: readonly string[];
