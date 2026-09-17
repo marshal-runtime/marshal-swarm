@@ -34,8 +34,7 @@ export function createSwarmSource(options: SwarmSourceOptions): SwarmSource {
   let executor: SwarmExecutor | undefined;
   const source: RuntimeHostProviderSource = (context) => {
     const execution: SwarmExecutionContext = {
-      execute: (request, invocation) =>
-        context.operationInvoker.execute(request, invocation),
+      execute: (request, invocation) => context.operationInvoker.execute(request, invocation),
     };
     executor ??= new SwarmExecutor(execution, options);
     return createSwarmProvider(executor, options.providerId);
@@ -54,11 +53,7 @@ export function createSwarmProvider(
     executor,
     list: () => DESCRIPTORS,
     get: (name) => DESCRIPTORS.find((descriptor) => descriptor.name === name),
-    async invoke(
-      name: string,
-      rawInput: unknown,
-      invocation: InvocationContext,
-    ) {
+    async invoke(name: string, rawInput: unknown, invocation: InvocationContext) {
       const input = requiredRecord(rawInput);
       if (name.startsWith("swarm.nodes."))
         return {
@@ -72,14 +67,15 @@ export function createSwarmProvider(
         };
       if (name === "swarm.runs.read-file") {
         return {
-          output: await executor.readEvidence({
-            ...parseRunInput(input),
-            taskId: requiredString(input.taskId, "taskId"),
-            uri: requiredString(input.uri, "uri"),
-            ...(input.offset === undefined
-              ? {}
-              : { offset: requiredOffset(input.offset) }),
-          }, invocation),
+          output: await executor.readEvidence(
+            {
+              ...parseRunInput(input),
+              taskId: requiredString(input.taskId, "taskId"),
+              uri: requiredString(input.uri, "uri"),
+              ...(input.offset === undefined ? {} : { offset: requiredOffset(input.offset) }),
+            },
+            invocation,
+          ),
         };
       }
       if (name === "swarm.runs.evidence-list")
@@ -93,10 +89,7 @@ export function createSwarmProvider(
           },
         };
       if (name === "swarm.runs.evidence-open") {
-        const run = await executor.openEvidence(
-          requiredString(input.id, "id"),
-          invocation,
-        );
+        const run = await executor.openEvidence(requiredString(input.id, "id"), invocation);
         return { output: { run } };
       }
       switch (name) {
@@ -109,10 +102,7 @@ export function createSwarmProvider(
         case SWARM_RUNS_GET:
           return {
             output: {
-              run: await executor.getAuthorized(
-                parseRunInput(input),
-                invocation,
-              ),
+              run: await executor.getAuthorized(parseRunInput(input), invocation),
             },
           };
         case SWARM_RUNS_LIST:
@@ -138,18 +128,42 @@ export function createSwarmProvider(
             },
           };
         case SWARM_RUNS_RECOVER_SYSTEM_FAILURE:
-          if (input.classification !== "owner-session-busy-transport" && input.classification !== "owner-session-superseded-transport") throw new Error("Explicit owner-session-busy-transport classification is required.");
+          if (
+            input.classification !== "owner-session-busy-transport" &&
+            input.classification !== "owner-session-superseded-transport"
+          )
+            throw new Error("Explicit owner-session-busy-transport classification is required.");
           for (const field of ["expectedTaskFailureIndex", "expectedRunFailureIndex"])
-            if (!Number.isSafeInteger(input[field]) || Number(input[field]) < 1) throw new Error(`${field} must be a positive event index.`);
-          return { output: { run: await executor.recoverSystemFailure({
-            ...parseRunInput(input), reason: requiredString(input.reason, "reason"),
-            classification: input.classification,
-            expectedTaskFailureIndex: input.expectedTaskFailureIndex as number,
-            expectedRunFailureIndex: input.expectedRunFailureIndex as number,
-          }, invocation) } };
+            if (!Number.isSafeInteger(input[field]) || Number(input[field]) < 1)
+              throw new Error(`${field} must be a positive event index.`);
+          return {
+            output: {
+              run: await executor.recoverSystemFailure(
+                {
+                  ...parseRunInput(input),
+                  reason: requiredString(input.reason, "reason"),
+                  classification: input.classification,
+                  expectedTaskFailureIndex: input.expectedTaskFailureIndex as number,
+                  expectedRunFailureIndex: input.expectedRunFailureIndex as number,
+                },
+                invocation,
+              ),
+            },
+          };
         case SWARM_RUNS_SET_ROLE_MODELS:
           validateSwarmRoleModels(input.roleModels);
-          return { output: { run: await executor.setRoleModels({ ...parseRunInput(input), roleModels: input.roleModels, reason: requiredString(input.reason, "reason") }, invocation) } };
+          return {
+            output: {
+              run: await executor.setRoleModels(
+                {
+                  ...parseRunInput(input),
+                  roleModels: input.roleModels,
+                  reason: requiredString(input.reason, "reason"),
+                },
+                invocation,
+              ),
+            },
+          };
         case SWARM_RUNS_DRIVE:
           await executor.getRootAuthorized(parseRunInput(input), invocation);
           return {
@@ -170,9 +184,15 @@ const IDENTIFIER = {
 const RUN_INPUT = objectSchema({ runId: IDENTIFIER }, ["runId"]);
 const RUN_OUTPUT = objectSchema({ run: { type: "object" } }, ["run"]);
 const ROLE_MODELS = {
-  type: "object", minProperties: 1, additionalProperties: false,
-  properties: Object.fromEntries(["planner", "worker", "reconciler", "reviewer"].map((role) => [role,
-    objectSchema({ model: IDENTIFIER, reasoningEffort: IDENTIFIER }, ["model"])])),
+  type: "object",
+  minProperties: 1,
+  additionalProperties: false,
+  properties: Object.fromEntries(
+    ["planner", "worker", "reconciler", "reviewer"].map((role) => [
+      role,
+      objectSchema({ model: IDENTIFIER, reasoningEffort: IDENTIFIER }, ["model"]),
+    ]),
+  ),
 } as const;
 const DESCRIPTORS: readonly CapabilityDescriptor[] = [
   ...[
@@ -183,6 +203,7 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
     "block",
     "fail",
     "complete",
+    "continue",
     "resume",
   ].map((name) =>
     descriptor(
@@ -213,10 +234,7 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
       },
       objectSchema(
         {
-          node:
-            name === "list"
-              ? { type: "array", items: { type: "object" } }
-              : { type: "object" },
+          node: name === "list" ? { type: "array", items: { type: "object" } } : { type: "object" },
         },
         ["node"],
       ),
@@ -254,10 +272,11 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
       {
         entries: {
           type: "array",
-          items: objectSchema(
-            { id: IDENTIFIER, title: IDENTIFIER, status: IDENTIFIER },
-            ["id", "title", "status"],
-          ),
+          items: objectSchema({ id: IDENTIFIER, title: IDENTIFIER, status: IDENTIFIER }, [
+            "id",
+            "title",
+            "status",
+          ]),
         },
       },
       ["entries"],
@@ -304,7 +323,13 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
     ),
     RUN_OUTPUT,
   ),
-  descriptor(SWARM_RUNS_GET, "Read a complete same-identity swarm tree, including paused and historical runs", RUN_INPUT, RUN_OUTPUT, true),
+  descriptor(
+    SWARM_RUNS_GET,
+    "Read a complete same-identity swarm tree, including paused and historical runs",
+    RUN_INPUT,
+    RUN_OUTPUT,
+    true,
+  ),
   descriptor(
     SWARM_RUNS_LIST,
     "List all swarm runs for this identity, including paused and historical runs",
@@ -342,19 +367,35 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
     RUN_OUTPUT,
   ),
   descriptor(SWARM_RUNS_RESUME, "Resume a swarm run", RUN_INPUT, RUN_OUTPUT),
-  descriptor(SWARM_RUNS_SET_ROLE_MODELS, "Update durable role model selections for future Swarm launches without resuming", objectSchema({ runId: IDENTIFIER, roleModels: ROLE_MODELS, reason: IDENTIFIER }, ["runId", "roleModels", "reason"]), RUN_OUTPUT),
-  descriptor(SWARM_RUNS_RECOVER_SYSTEM_FAILURE, "Explicitly recover an owner-session busy transport failure into a paused run", objectSchema({
-    runId: IDENTIFIER, reason: IDENTIFIER,
-    classification: { type: "string", enum: ["owner-session-busy-transport", "owner-session-superseded-transport"] },
-    expectedTaskFailureIndex: { type: "integer", minimum: 1 },
-    expectedRunFailureIndex: { type: "integer", minimum: 1 },
-  }, ["runId", "reason", "classification", "expectedTaskFailureIndex", "expectedRunFailureIndex"]), RUN_OUTPUT),
   descriptor(
-    SWARM_RUNS_DRIVE,
-    "Drive a swarm run to completion",
-    RUN_INPUT,
+    SWARM_RUNS_SET_ROLE_MODELS,
+    "Update durable role model selections for future Swarm launches without resuming",
+    objectSchema({ runId: IDENTIFIER, roleModels: ROLE_MODELS, reason: IDENTIFIER }, [
+      "runId",
+      "roleModels",
+      "reason",
+    ]),
     RUN_OUTPUT,
   ),
+  descriptor(
+    SWARM_RUNS_RECOVER_SYSTEM_FAILURE,
+    "Explicitly recover an owner-session busy transport failure into a paused run",
+    objectSchema(
+      {
+        runId: IDENTIFIER,
+        reason: IDENTIFIER,
+        classification: {
+          type: "string",
+          enum: ["owner-session-busy-transport", "owner-session-superseded-transport"],
+        },
+        expectedTaskFailureIndex: { type: "integer", minimum: 1 },
+        expectedRunFailureIndex: { type: "integer", minimum: 1 },
+      },
+      ["runId", "reason", "classification", "expectedTaskFailureIndex", "expectedRunFailureIndex"],
+    ),
+    RUN_OUTPUT,
+  ),
+  descriptor(SWARM_RUNS_DRIVE, "Drive a swarm run to completion", RUN_INPUT, RUN_OUTPUT),
 ];
 function descriptor(
   name: string,
@@ -379,9 +420,7 @@ function descriptor(
     ],
   };
 }
-function parseCreateInput(
-  input: Readonly<Record<string, unknown>>,
-): SwarmRunCreateInput {
+function parseCreateInput(input: Readonly<Record<string, unknown>>): SwarmRunCreateInput {
   if (input.roleModels !== undefined) validateSwarmRoleModels(input.roleModels);
   const objective =
     input.objective === undefined
@@ -390,24 +429,16 @@ function parseCreateInput(
   return {
     objective,
     ...(input.roleModels === undefined ? {} : { roleModels: input.roleModels }),
-    ...(input.runId === undefined
-      ? {}
-      : { runId: requiredString(input.runId, "runId") }),
-    ...(input.scope === undefined
-      ? {}
-      : { scope: requiredString(input.scope, "scope") }),
-    ...(input.fresh === undefined
-      ? {}
-      : { fresh: requiredBoolean(input.fresh, "fresh") }),
+    ...(input.runId === undefined ? {} : { runId: requiredString(input.runId, "runId") }),
+    ...(input.scope === undefined ? {} : { scope: requiredString(input.scope, "scope") }),
+    ...(input.fresh === undefined ? {} : { fresh: requiredBoolean(input.fresh, "fresh") }),
     ...(input.targetRef === undefined
       ? {}
       : { targetRef: requiredString(input.targetRef, "targetRef") }),
     ...(input.targetHead === undefined
       ? {}
       : { targetHead: requiredString(input.targetHead, "targetHead") }),
-    ...(input.targets === undefined
-      ? {}
-      : { targets: parseTargets(input.targets) }),
+    ...(input.targets === undefined ? {} : { targets: parseTargets(input.targets) }),
     ...(input.workerModel === undefined
       ? {}
       : { workerModel: requiredString(input.workerModel, "workerModel") }),
@@ -437,22 +468,16 @@ function parseTargets(value: unknown): readonly SwarmRunTarget[] {
     };
   });
 }
-function parseRunInput(
-  input: Readonly<Record<string, unknown>>,
-): SwarmRunInput {
+function parseRunInput(input: Readonly<Record<string, unknown>>): SwarmRunInput {
   return { runId: requiredString(input.runId, "runId") };
 }
-function parsePauseInput(
-  input: Readonly<Record<string, unknown>>,
-): SwarmRunPauseInput {
+function parsePauseInput(input: Readonly<Record<string, unknown>>): SwarmRunPauseInput {
   return {
     runId: requiredString(input.runId, "runId"),
     reason: requiredString(input.reason, "reason"),
   };
 }
-function parseCancelInput(
-  input: Readonly<Record<string, unknown>>,
-): SwarmRunCancelInput {
+function parseCancelInput(input: Readonly<Record<string, unknown>>): SwarmRunCancelInput {
   return {
     runId: requiredString(input.runId, "runId"),
     reason: requiredString(input.reason, "reason"),

@@ -117,11 +117,7 @@ describe("security and recovery regressions", () => {
       await child(store, "c", role);
       await start(store, "root/c");
       await expect(
-        executor.nodeOperation(
-          "launch",
-          { ...launch, parentTaskId: "root/c" },
-          member("root/c"),
-        ),
+        executor.nodeOperation("launch", { ...launch, parentTaskId: "root/c" }, member("root/c")),
       ).rejects.toThrow("Role");
     },
   );
@@ -150,11 +146,7 @@ describe("security and recovery regressions", () => {
     await expect(
       executor.nodeOperation("launch", { ...launch, scope: "unknown" }, owner),
     ).rejects.toThrow("declared");
-    const node: any = await executor.nodeOperation(
-      "launch",
-      { ...launch, scope: "b" },
-      owner,
-    );
+    const node: any = await executor.nodeOperation("launch", { ...launch, scope: "b" }, owner);
     expect(node.scope).toBe("b");
   });
   it("does not release blocked dependencies", async () => {
@@ -169,13 +161,9 @@ describe("security and recovery regressions", () => {
     await child(store, "waiting", "worker", ["root/dep"]);
     await executor.drive({ runId: "r" }, owner);
     expect(
-      (await executor.get({ runId: "r" })).tasks.find(
-        (t) => t.taskId === "root/waiting",
-      )?.state,
+      (await executor.get({ runId: "r" })).tasks.find((t) => t.taskId === "root/waiting")?.state,
     ).toBe("pending");
-    expect(calls.some((c) => c.target === "runtime.delegation.spawn")).toBe(
-      false,
-    );
+    expect(calls.some((c) => c.target === "runtime.delegation.spawn")).toBe(false);
   });
   it("releases pending dependency after explicit completion", async () => {
     const { executor, store, calls } = await fixture();
@@ -228,11 +216,7 @@ describe("security and recovery regressions", () => {
       await child(store, "c", role);
       await start(store, "root/c");
       await expect(
-        executor.nodeOperation(
-          "complete",
-          { runId: "r", taskId: "root/c" },
-          member("root/c"),
-        ),
+        executor.nodeOperation("complete", { runId: "r", taskId: "root/c" }, member("root/c")),
       ).rejects.toThrow("artifact");
     },
   );
@@ -245,16 +229,10 @@ describe("security and recovery regressions", () => {
     await child(store, "c");
     await start(store, "root/c");
     await expect(
-      executor.nodeOperation(
-        "complete",
-        { runId: "r", taskId: "root/c" },
-        member("root/c"),
-      ),
+      executor.nodeOperation("complete", { runId: "r", taskId: "root/c" }, member("root/c")),
     ).rejects.toThrow("Integration rejected");
     expect(
-      (await executor.get({ runId: "r" })).tasks.find(
-        (t) => t.taskId === "root/c",
-      )?.state,
+      (await executor.get({ runId: "r" })).tasks.find((t) => t.taskId === "root/c")?.state,
     ).toBe("running");
   });
   it("explains a reconciler report-kind mismatch and completes after republishing the same file as reconciliation", async () => {
@@ -262,19 +240,49 @@ describe("security and recovery regressions", () => {
     await child(store, "oracle-subsystem", "planner");
     await start(store, "root/oracle-subsystem");
     const taskId = "root/oracle-subsystem/oracle-recon";
-    await store.append("r", { type: "task.added", task: { taskId, parentTaskId: "root/oracle-subsystem", role: "reconciler", scope: "a", objective: "Reconcile six completed branches without redoing work" } });
+    await store.append("r", {
+      type: "task.added",
+      task: {
+        taskId,
+        parentTaskId: "root/oracle-subsystem",
+        role: "reconciler",
+        scope: "a",
+        objective: "Reconcile six completed branches without redoing work",
+      },
+    });
     await start(store, taskId);
-    const artifact = { uri: "/workspace/artifacts/oracle-recon-checkpoint.md", kind: "report", summary: "All six branches integrated; tests green; existing commit preserved." };
+    const artifact = {
+      uri: "/workspace/artifacts/oracle-recon-checkpoint.md",
+      kind: "report",
+      summary: "All six branches integrated; tests green; existing commit preserved.",
+    };
     const caller = member(taskId);
     await executor.nodeOperation("publishArtifact", { runId: "r", taskId, artifact }, caller);
     const before = await store.read("r");
-    expect(replaySwarmRun(before).tasks.find((task) => task.taskId === taskId)?.artifactRefs).toEqual([artifact]);
-    await expect(executor.nodeOperation("complete", { runId: "r", taskId, commits: ["integrated-commit"] }, caller))
-      .rejects.toThrow('reconciler requires an artifact of kind "reconciliation"; recorded kinds: report');
+    expect(
+      replaySwarmRun(before).tasks.find((task) => task.taskId === taskId)?.artifactRefs,
+    ).toEqual([artifact]);
+    await expect(
+      executor.nodeOperation(
+        "complete",
+        { runId: "r", taskId, commits: ["integrated-commit"] },
+        caller,
+      ),
+    ).rejects.toThrow(
+      'reconciler requires an artifact of kind "reconciliation"; recorded kinds: report',
+    );
     expect(await store.read("r")).toEqual(before);
     expect(calls.filter((call) => call.target === "runtime.delegation.complete")).toHaveLength(0);
-    await executor.nodeOperation("publishArtifact", { runId: "r", taskId, artifact: { ...artifact, kind: "reconciliation" } }, caller);
-    const completed: any = await executor.nodeOperation("complete", { runId: "r", taskId, commits: ["integrated-commit"] }, caller);
+    await executor.nodeOperation(
+      "publishArtifact",
+      { runId: "r", taskId, artifact: { ...artifact, kind: "reconciliation" } },
+      caller,
+    );
+    const completed: any = await executor.nodeOperation(
+      "complete",
+      { runId: "r", taskId, commits: ["integrated-commit"] },
+      caller,
+    );
     expect(completed.state).toBe("completed");
     expect(completed.artifactRefs).toEqual([{ ...artifact, kind: "reconciliation" }]);
     expect(completed.delegationId).toBe(taskId);
@@ -290,45 +298,78 @@ describe("security and recovery regressions", () => {
     await child(store, "c");
     await start(store, "root/c");
     await expect(
-      executor.nodeOperation(
-        "complete",
-        { runId: "r", taskId: "root/c" },
-        member("root/c"),
-      ),
+      executor.nodeOperation("complete", { runId: "r", taskId: "root/c" }, member("root/c")),
     ).rejects.toThrow("finalize");
   });
   it.each([
-    { label: "explicit commit", commits: ["d6a7054fd3413f9d129e6621e81024b49ac7e5be"], expected: ["d6a7054fd3413f9d129e6621e81024b49ac7e5be"] },
+    {
+      label: "explicit commit",
+      commits: ["d6a7054fd3413f9d129e6621e81024b49ac7e5be"],
+      expected: ["d6a7054fd3413f9d129e6621e81024b49ac7e5be"],
+    },
     { label: "explicit empty list", commits: [], expected: [] },
-    { label: "omitted commits", commits: undefined, expected: ["refs/heads/marshal/subagent/native-checkout"] },
+    {
+      label: "omitted commits",
+      commits: undefined,
+      expected: ["refs/heads/marshal/subagent/native-checkout"],
+    },
   ])("preserves $label separately from native checkout refs", async ({ commits, expected }) => {
     const nativeRefs = ["refs/heads/marshal/subagent/native-checkout"];
-    const { executor, store, calls } = await fixture((request) => request.target === "runtime.delegation.complete"
-      ? { result: { output: { state: "done", finalized: true, changeRefs: nativeRefs } } }
-      : undefined);
+    const { executor, store, calls } = await fixture((request) =>
+      request.target === "runtime.delegation.complete"
+        ? { result: { output: { state: "done", finalized: true, changeRefs: nativeRefs } } }
+        : undefined,
+    );
     await child(store, "outputs");
     await start(store, "root/outputs");
-    const completed: any = await executor.nodeOperation("complete", {
-      runId: "r", taskId: "root/outputs", ...(commits === undefined ? {} : { commits }),
-    }, member("root/outputs"));
+    const completed: any = await executor.nodeOperation(
+      "complete",
+      {
+        runId: "r",
+        taskId: "root/outputs",
+        ...(commits === undefined ? {} : { commits }),
+      },
+      member("root/outputs"),
+    );
     expect(completed.changeRefs).toEqual(expected);
-    expect((await store.read("r")).find((event) => event.type === "task.completed" && event.taskId === "root/outputs"))
-      .toMatchObject({ changeRefs: expected });
-    expect(calls.find((call) => call.target === "runtime.delegation.complete")?.input)
-      .toEqual({ delegationId: "root/outputs" });
+    expect(
+      (await store.read("r")).find(
+        (event) => event.type === "task.completed" && event.taskId === "root/outputs",
+      ),
+    ).toMatchObject({ changeRefs: expected });
+    expect(calls.find((call) => call.target === "runtime.delegation.complete")?.input).toEqual({
+      delegationId: "root/outputs",
+    });
     expect(nativeRefs).toEqual(["refs/heads/marshal/subagent/native-checkout"]);
   });
   it("does not accept declared commits when native ownership/finalization rejects completion", async () => {
-    const { executor, store } = await fixture((request) => request.target === "runtime.delegation.complete"
-      ? { result: { output: { state: "failed", error: "Native ownership validation rejected completion" } } }
-      : undefined);
+    const { executor, store } = await fixture((request) =>
+      request.target === "runtime.delegation.complete"
+        ? {
+            result: {
+              output: { state: "failed", error: "Native ownership validation rejected completion" },
+            },
+          }
+        : undefined,
+    );
     await child(store, "outputs");
     await start(store, "root/outputs");
     const before = await store.read("r");
-    await expect(executor.nodeOperation("complete", { runId: "r", taskId: "root/outputs", commits: ["d6a7054fd3413f9d129e6621e81024b49ac7e5be"] }, member("root/outputs")))
-      .rejects.toThrow("Native ownership validation rejected completion");
+    await expect(
+      executor.nodeOperation(
+        "complete",
+        {
+          runId: "r",
+          taskId: "root/outputs",
+          commits: ["d6a7054fd3413f9d129e6621e81024b49ac7e5be"],
+        },
+        member("root/outputs"),
+      ),
+    ).rejects.toThrow("Native ownership validation rejected completion");
     expect(await store.read("r")).toEqual(before);
-    expect(replaySwarmRun(before).tasks.find((task) => task.taskId === "root/outputs")?.state).toBe("running");
+    expect(replaySwarmRun(before).tasks.find((task) => task.taskId === "root/outputs")?.state).toBe(
+      "running",
+    );
   });
   it("cancellation records reason on every unfinished node", async () => {
     const { executor, store } = await fixture();
@@ -348,14 +389,19 @@ describe("security and recovery regressions", () => {
     );
     await child(store, "c");
     await executor.drive({ runId: "r" }, owner);
-    expect((await executor.get({ runId: "r" })).pauseReason?.kind).toBe(
-      "environmental",
-    );
+    expect((await executor.get({ runId: "r" })).pauseReason?.kind).toBe("environmental");
   });
   it("restart uses exact persisted launch inputs", async () => {
     const { executor, store, calls } = await fixture();
     await child(store, "c");
-    await executor.setRoleModels({ runId: "r", roleModels: { worker: { model: "original-model" } }, reason: "Approved original dispatch policy" }, owner);
+    await executor.setRoleModels(
+      {
+        runId: "r",
+        roleModels: { worker: { model: "original-model" } },
+        reason: "Approved original dispatch policy",
+      },
+      owner,
+    );
     const launchInput = {
       prompt: "original input",
       role: "worker",
@@ -375,17 +421,22 @@ describe("security and recovery regressions", () => {
       },
     });
     await executor.drive({ runId: "r" }, owner);
-    expect(
-      calls.find((c) => c.target === "runtime.delegation.spawn")?.input,
-    ).toEqual(launchInput);
+    expect(calls.find((c) => c.target === "runtime.delegation.spawn")?.input).toEqual(launchInput);
   });
-  it("bounds idle reminders and durably blocks exhaustion", async () => {
-    const { executor } = await fixture();
-    await executor.drive({ runId: "r" }, owner);
+  it("allows a running task to request any number of additional turns", async () => {
+    const { executor, store } = await fixture();
+    for (let turn = 1; turn <= 100; turn += 1) {
+      await store.append("r", {
+        type: "task.continuationRequested",
+        taskId: "root",
+        reason: `Continue with turn ${String(turn)}`,
+      });
+    }
     const root = (await executor.get({ runId: "r" })).tasks[0];
-    expect(root.idleReminders).toBe(2);
-    expect(root.state).toBe("blocked");
-    expect(root.reason).toContain("two reminders");
+    expect(root.resumeCount).toBe(100);
+    expect(root.idleReminders).toBe(0);
+    expect(root.state).toBe("running");
+    expect(root.resumeReason).toBe("Continue with turn 100");
   });
   it("atomic append rejects invalid event without corrupting file", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "swarm-"));
@@ -401,13 +452,12 @@ describe("security and recovery regressions", () => {
           scope: "a",
         },
       });
-      await expect(
-        store.append("r", { type: "task.completed", taskId: "root" }),
-      ).rejects.toThrow("running");
-      expect(
-        replaySwarmRun(await new FileSwarmRunEventStore(dir).read("r")).tasks[0]
-          .state,
-      ).toBe("pending");
+      await expect(store.append("r", { type: "task.completed", taskId: "root" })).rejects.toThrow(
+        "running",
+      );
+      expect(replaySwarmRun(await new FileSwarmRunEventStore(dir).read("r")).tasks[0].state).toBe(
+        "pending",
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -427,18 +477,12 @@ describe("security and recovery regressions", () => {
       member("root/c"),
     );
     await executor.drive({ runId: "r" }, owner);
-    const task = (await executor.get({ runId: "r" })).tasks.find(
-      (t) => t.taskId === "root/c",
-    )!;
+    const task = (await executor.get({ runId: "r" })).tasks.find((t) => t.taskId === "root/c")!;
     expect(task.delegationId).toBe("root/c");
-    expect(
-      calls.filter((c) => c.target === "runtime.delegation.spawn"),
-    ).toHaveLength(0);
+    expect(calls.filter((c) => c.target === "runtime.delegation.spawn")).toHaveLength(0);
     expect(
       calls.some(
-        (c) =>
-          c.target === "runtime.delegation.continue" &&
-          c.input.prompt.includes("Resolved"),
+        (c) => c.target === "runtime.delegation.continue" && c.input.prompt.includes("Resolved"),
       ),
     ).toBe(true);
   });
@@ -498,14 +542,8 @@ describe("security and recovery regressions", () => {
     );
     await child(store, "c");
     await start(store, "root/c");
-    await executor.nodeOperation(
-      "complete",
-      { runId: "r", taskId: "root/c" },
-      member("root/c"),
-    );
-    const task = (await executor.get({ runId: "r" })).tasks.find(
-      (t) => t.taskId === "root/c",
-    )!;
+    await executor.nodeOperation("complete", { runId: "r", taskId: "root/c" }, member("root/c"));
+    const task = (await executor.get({ runId: "r" })).tasks.find((t) => t.taskId === "root/c")!;
     const receipt = task.executions.find((e) => e.executionId === "turn-a")!;
     expect(receipt.model).toBe("actual-model");
     expect(receipt.kind).toBe("turn");
@@ -553,24 +591,60 @@ describe("security and recovery regressions", () => {
 
   it("activation forwards the host transcript reader without granting an outsider write authority", async () => {
     const { store } = await fixture();
-    await store.append("r", { type: "task.execution", taskId: "root", execution: { executionId: "native-turn", sessionId: "persisted-native", transcriptRef: "/encrypted/session.json" } });
+    await store.append("r", {
+      type: "task.execution",
+      taskId: "root",
+      execution: {
+        executionId: "native-turn",
+        sessionId: "persisted-native",
+        transcriptRef: "/encrypted/session.json",
+      },
+    });
     const outside = member("outside");
     const readerCalls: unknown[] = [];
-    const reader = { read: async (input: unknown, invocation: unknown) => {
-      readerCalls.push({ input, invocation });
-      return { uri: "/encrypted/session.json", text: "decoded transcript", truncated: false };
-    } };
+    const reader = {
+      read: async (input: unknown, invocation: unknown) => {
+        readerCalls.push({ input, invocation });
+        return { uri: "/encrypted/session.json", text: "decoded transcript", truncated: false };
+      },
+    };
     const activation = await activate({
       configuration: { runsDirectory: "/tmp/unused-swarmed-test" },
-      services: { tryGet: (key: unknown) => key === SwarmServiceSymbols.eventStore ? store : key === SwarmServiceSymbols.transcriptReader ? reader : undefined },
-      execute: async () => { throw new Error("Unexpected dispatch during read"); },
+      services: {
+        tryGet: (key: unknown) =>
+          key === SwarmServiceSymbols.eventStore
+            ? store
+            : key === SwarmServiceSymbols.transcriptReader
+              ? reader
+              : undefined,
+      },
+      execute: async () => {
+        throw new Error("Unexpected dispatch during read");
+      },
     } as any);
     try {
       const provider = activation.capabilityProviders![0];
-      expect(await provider.invoke("swarm.runs.read-file", { runId: "r", taskId: "root", uri: "/encrypted/session.json", offset: 7 }, outside)).toEqual({ output: { uri: "/encrypted/session.json", text: "decoded transcript", truncated: false } });
-      expect(readerCalls).toEqual([{ input: { sessionId: "persisted-native", uri: "/encrypted/session.json", offset: 7 }, invocation: outside }]);
-      await expect(provider.invoke("swarm.runs.drive", { runId: "r" }, outside)).rejects.toThrow("owner");
-    } finally { await activation.dispose?.(); }
+      expect(
+        await provider.invoke(
+          "swarm.runs.read-file",
+          { runId: "r", taskId: "root", uri: "/encrypted/session.json", offset: 7 },
+          outside,
+        ),
+      ).toEqual({
+        output: { uri: "/encrypted/session.json", text: "decoded transcript", truncated: false },
+      });
+      expect(readerCalls).toEqual([
+        {
+          input: { sessionId: "persisted-native", uri: "/encrypted/session.json", offset: 7 },
+          invocation: outside,
+        },
+      ]);
+      await expect(provider.invoke("swarm.runs.drive", { runId: "r" }, outside)).rejects.toThrow(
+        "owner",
+      );
+    } finally {
+      await activation.dispose?.();
+    }
   });
 
   it("managed extension rejects a foreign drive before starting or publishing", async () => {
@@ -579,8 +653,7 @@ describe("security and recovery regressions", () => {
     const activation = await activate({
       configuration: { runsDirectory: "/tmp/unused-swarmed-test" },
       services: {
-        tryGet: (key: unknown) =>
-          key === SwarmServiceSymbols.eventStore ? store : undefined,
+        tryGet: (key: unknown) => (key === SwarmServiceSymbols.eventStore ? store : undefined),
       },
       execute: async () => {
         executed++;
@@ -603,16 +676,12 @@ describe("security and recovery regressions", () => {
     await executor.resume({ runId: "r" }, owner);
     expect(
       calls.some(
-        (c) =>
-          c.target === "runtime.delegation.continue" &&
-          c.input.delegationId === "root/c",
+        (c) => c.target === "runtime.delegation.continue" && c.input.delegationId === "root/c",
       ),
     ).toBe(true);
-    expect(
-      (await executor.get({ runId: "r" })).tasks.some(
-        (t) => t.state === "failed",
-      ),
-    ).toBe(false);
+    expect((await executor.get({ runId: "r" })).tasks.some((t) => t.state === "failed")).toBe(
+      false,
+    );
   });
   it("a stale wait error cannot fail a task after explicit block/resume", async () => {
     let release!: (value: unknown) => void;
@@ -694,11 +763,7 @@ describe("security and recovery regressions", () => {
       },
       owner,
     );
-    await executor.nodeOperation(
-      "complete",
-      { runId: "r", taskId: "root" },
-      owner,
-    );
+    await executor.nodeOperation("complete", { runId: "r", taskId: "root" }, owner);
     expect((await executor.get({ runId: "r" })).state).toBe("completed");
   });
   it("surfaces a pre-dispatch preparation error on a pending task", async () => {
@@ -713,10 +778,7 @@ describe("security and recovery regressions", () => {
       { execute: async () => ({ result: { output: {} } }) } as any,
       { eventStore: store, serviceContainer: services },
     );
-    await executor.create(
-      { runId: "preparation", objective: "Work", scope: "repo" },
-      owner,
-    );
+    await executor.create({ runId: "preparation", objective: "Work", scope: "repo" }, owner);
     await executor.drive({ runId: "preparation" }, owner);
     const run = await executor.get({ runId: "preparation" });
     expect(run.state).toBe("failed");
@@ -730,8 +792,7 @@ describe("security and recovery regressions", () => {
     const activation = await activate({
       configuration: { runsDirectory: "/tmp/unused-background-test" },
       services: {
-        tryGet: (key: unknown) =>
-          key === SwarmServiceSymbols.eventStore ? store : undefined,
+        tryGet: (key: unknown) => (key === SwarmServiceSymbols.eventStore ? store : undefined),
       },
       execute: async (request: any, context: any) => {
         if (request.target === "runtime.delegation.spawn") {
@@ -770,10 +831,7 @@ describe("security and recovery regressions", () => {
     );
     requestController.abort();
     await expect
-      .poll(
-        async () =>
-          replaySwarmRun(await store.read("background")).tasks[0].state,
-      )
+      .poll(async () => replaySwarmRun(await store.read("background")).tasks[0].state)
       .toBe("running");
     expect(spawnContext.signal).toBeUndefined();
     expect(spawnContext.metadata).toEqual({ trusted: "preserved" });

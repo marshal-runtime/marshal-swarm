@@ -5,16 +5,23 @@ export type SwarmJsonValue =
   | {
       readonly [key: string]: SwarmJsonValue;
     };
-export type SwarmTaskState =
-  "pending" | "running" | "blocked" | "completed" | "failed";
+export type SwarmTaskState = "pending" | "running" | "blocked" | "completed" | "failed";
 export type SwarmRunState = Exclude<SwarmTaskState, "pending"> | "paused";
 export type SwarmTaskRole = "planner" | "worker" | "reconciler" | "reviewer";
-export type SwarmRoleModels = Readonly<Partial<Record<SwarmTaskRole, {
-  readonly model: string;
-  readonly reasoningEffort?: string;
-}>>>;
+export type SwarmRoleModels = Readonly<
+  Partial<
+    Record<
+      SwarmTaskRole,
+      {
+        readonly model: string;
+        readonly reasoningEffort?: string;
+      }
+    >
+  >
+>;
 export const SWARM_OWNER_SESSION_SUPERSEDED_ERROR = "Session send was superseded before it started";
-export const SWARM_OWNER_SESSION_BUSY_ERROR = "Another message or turn is already active for this session";
+export const SWARM_OWNER_SESSION_BUSY_ERROR =
+  "Another message or turn is already active for this session";
 export type SwarmPauseReason =
   | {
       readonly kind: "manual";
@@ -131,7 +138,9 @@ export type SwarmRunEvent =
       readonly type: "run.systemFailureRecovered";
       readonly taskId: string;
       readonly reason: string;
-      readonly classification: "owner-session-busy-transport" | "owner-session-superseded-transport";
+      readonly classification:
+        | "owner-session-busy-transport"
+        | "owner-session-superseded-transport";
       readonly expectedTaskFailureIndex: number;
       readonly expectedRunFailureIndex: number;
       readonly ownerSessionId: string;
@@ -155,6 +164,11 @@ export type SwarmRunEvent =
     }
   | {
       readonly type: "task.blocked" | "task.resumed";
+      readonly taskId: string;
+      readonly reason: string;
+    }
+  | {
+      readonly type: "task.continuationRequested";
       readonly taskId: string;
       readonly reason: string;
     }
@@ -244,23 +258,17 @@ export function swarmRunTargets(run: SwarmRun): readonly SwarmRunTarget[] {
   return (
     run.targets ??
     (run.targetRef && run.targetHead
-      ? Object.freeze([
-          { scope: run.scope, ref: run.targetRef, head: run.targetHead },
-        ])
+      ? Object.freeze([{ scope: run.scope, ref: run.targetRef, head: run.targetHead }])
       : Object.freeze([]))
   );
 }
 export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
   if (!Array.isArray(events) || events.length === 0)
-    throw new SwarmValidationError(
-      "A swarm run must contain a run.created event.",
-    );
+    throw new SwarmValidationError("A swarm run must contain a run.created event.");
   const first = validateSwarmRunEvent(events[0], 0);
-  if (first.type !== "run.created")
-    throw eventError(0, "The first event must be run.created.");
+  if (first.type !== "run.created") throw eventError(0, "The first event must be run.created.");
   const legacy =
-    first.protocolVersion === undefined &&
-    !events.some((event) => isOwnedTaskEvent(event));
+    first.protocolVersion === undefined && !events.some((event) => isOwnedTaskEvent(event));
   const tasks = new Map<string, SwarmTask>();
   let state: SwarmRunState = "running";
   let pauseReason: SwarmPauseReason | undefined;
@@ -275,7 +283,12 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
       case "run.roleModelsUpdated": {
         assertNotTerminal(state, offset + 1, event.type);
         const root = [...tasks.values()].find((task) => task.parentTaskId === undefined);
-        if (legacy || !root || root.ownerSessionId !== event.ownerSessionId || root.ownerPrincipalId !== event.ownerPrincipalId)
+        if (
+          legacy ||
+          !root ||
+          root.ownerSessionId !== event.ownerSessionId ||
+          root.ownerPrincipalId !== event.ownerPrincipalId
+        )
           throw eventError(offset + 1, "Only the original root owner may update role models.");
         roleModels = { ...roleModels, ...event.roleModels };
         break;
@@ -287,10 +300,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         break;
       case "run.resumed":
         if (state === "completed")
-          throw eventError(
-            offset + 1,
-            "run.resumed may not follow a terminal run state.",
-          );
+          throw eventError(offset + 1, "run.resumed may not follow a terminal run state.");
         state = "running";
         pauseReason = undefined;
         result = undefined;
@@ -306,27 +316,58 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         break;
       case "run.systemFailureRecovered": {
         const root = requireTask(tasks, event.taskId, offset + 1);
-        const expectedError = event.classification === "owner-session-superseded-transport" ? SWARM_OWNER_SESSION_SUPERSEDED_ERROR : SWARM_OWNER_SESSION_BUSY_ERROR;
+        const expectedError =
+          event.classification === "owner-session-superseded-transport"
+            ? SWARM_OWNER_SESSION_SUPERSEDED_ERROR
+            : SWARM_OWNER_SESSION_BUSY_ERROR;
         const taskFailure = events[event.expectedTaskFailureIndex - 1] as SwarmRunEvent | undefined;
         const runFailure = events[event.expectedRunFailureIndex - 1] as SwarmRunEvent | undefined;
-        if (legacy || state !== "failed" || root.parentTaskId !== undefined || root.state !== "failed" ||
-            event.expectedRunFailureIndex !== event.expectedTaskFailureIndex + 1 || event.expectedRunFailureIndex > offset + 1 ||
-            !events.slice(event.expectedRunFailureIndex, offset + 1).every((value) =>
-              ["task.execution", "task.continued"].includes((value as SwarmRunEvent).type)) ||
-            taskFailure?.type !== "task.failed" || taskFailure.taskId !== root.taskId ||
-            taskFailure.error !== expectedError || taskFailure.failureOrigin === "agent" ||
-            (event.classification === "owner-session-busy-transport" && taskFailure.failureOrigin === "runtime" && taskFailure.failureCode !== "SESSION_BUSY") ||
-            runFailure?.type !== "run.failed" || runFailure.error !== expectedError ||
-            root.ownerSessionId !== event.ownerSessionId || root.ownerPrincipalId !== event.ownerPrincipalId ||
-            !root.executions.some((execution) => execution.sessionId === event.ownerSessionId)) {
-          throw eventError(offset + 1, "Recovery requires the exact failed owner-session transport tail and root identity.");
+        if (
+          legacy ||
+          state !== "failed" ||
+          root.parentTaskId !== undefined ||
+          root.state !== "failed" ||
+          event.expectedRunFailureIndex !== event.expectedTaskFailureIndex + 1 ||
+          event.expectedRunFailureIndex > offset + 1 ||
+          !events
+            .slice(event.expectedRunFailureIndex, offset + 1)
+            .every((value) =>
+              ["task.execution", "task.continued"].includes((value as SwarmRunEvent).type),
+            ) ||
+          taskFailure?.type !== "task.failed" ||
+          taskFailure.taskId !== root.taskId ||
+          taskFailure.error !== expectedError ||
+          taskFailure.failureOrigin === "agent" ||
+          (event.classification === "owner-session-busy-transport" &&
+            taskFailure.failureOrigin === "runtime" &&
+            taskFailure.failureCode !== "SESSION_BUSY") ||
+          runFailure?.type !== "run.failed" ||
+          runFailure.error !== expectedError ||
+          root.ownerSessionId !== event.ownerSessionId ||
+          root.ownerPrincipalId !== event.ownerPrincipalId ||
+          !root.executions.some((execution) => execution.sessionId === event.ownerSessionId)
+        ) {
+          throw eventError(
+            offset + 1,
+            "Recovery requires the exact failed owner-session transport tail and root identity.",
+          );
         }
         state = "paused";
-        pauseReason = { kind: "manual", message: `System failure recovered: ${event.reason}. Explicit resume required.` };
+        pauseReason = {
+          kind: "manual",
+          message: `System failure recovered: ${event.reason}. Explicit resume required.`,
+        };
         error = undefined;
         result = undefined;
-        tasks.set(root.taskId, { ...root, state: "running", error: undefined, reason: undefined,
-          resumeReason: event.reason, resumeCount: (root.resumeCount ?? 0) + 1, idleReminders: 0 });
+        tasks.set(root.taskId, {
+          ...root,
+          state: "running",
+          error: undefined,
+          reason: undefined,
+          resumeReason: event.reason,
+          resumeCount: (root.resumeCount ?? 0) + 1,
+          idleReminders: 0,
+        });
         break;
       }
       case "run.completed":
@@ -361,26 +402,17 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         )
           throw eventError(offset + 1, "Duplicate launch idempotency key.");
         if (tasks.has(event.task.taskId))
-          throw eventError(
-            offset + 1,
-            `Task "${event.task.taskId}" already exists.`,
-          );
+          throw eventError(offset + 1, `Task "${event.task.taskId}" already exists.`);
         if (event.task.parentTaskId) {
-          const parent = requireTask(
-            tasks,
-            event.task.parentTaskId,
-            offset + 1,
-          );
+          const parent = requireTask(tasks, event.task.parentTaskId, offset + 1);
           if (!legacy && parent.state !== "running")
             throw eventError(offset + 1, "Parent must be running.");
           tasks.set(parent.taskId, {
             ...parent,
             childTaskIds: [...parent.childTaskIds, event.task.taskId],
           });
-        } else if (tasks.size)
-          throw eventError(offset + 1, "Only one root is permitted.");
-        for (const id of event.task.dependencyTaskIds ?? [])
-          requireTask(tasks, id, offset + 1);
+        } else if (tasks.size) throw eventError(offset + 1, "Only one root is permitted.");
+        for (const id of event.task.dependencyTaskIds ?? []) requireTask(tasks, id, offset + 1);
         tasks.set(event.task.taskId, {
           ...event.task,
           dependencyTaskIds: event.task.dependencyTaskIds ?? [],
@@ -394,11 +426,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         const task = requireTask(tasks, event.taskId, offset + 1);
         if (!legacy && task.state !== "pending")
           throw eventError(offset + 1, "Only pending tasks can start.");
-        if (
-          (task.dependencyTaskIds ?? []).some(
-            (id) => tasks.get(id)?.state !== "completed",
-          )
-        )
+        if ((task.dependencyTaskIds ?? []).some((id) => tasks.get(id)?.state !== "completed"))
           throw eventError(offset + 1, "Dependencies must be completed.");
         tasks.set(event.taskId, {
           ...task,
@@ -424,11 +452,12 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
           )
         )
           throw eventError(offset + 1, "Children must be terminal.");
-        const completionArtifactKinds = task.role === "reviewer"
-          ? ["review"]
-          : task.role === "reconciler"
-            ? ["reconciliation"]
-            : ["plan", "decision", "report"];
+        const completionArtifactKinds =
+          task.role === "reviewer"
+            ? ["review"]
+            : task.role === "reconciler"
+              ? ["reconciliation"]
+              : ["plan", "decision", "report"];
         if (
           !legacy &&
           task.role !== "worker" &&
@@ -469,11 +498,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
       case "task.blocked":
       case "task.resumed": {
         const task = requireTask(tasks, event.taskId, offset + 1);
-        if (
-          event.type === "task.blocked"
-            ? task.state !== "running"
-            : task.state !== "blocked"
-        )
+        if (event.type === "task.blocked" ? task.state !== "running" : task.state !== "blocked")
           throw eventError(offset + 1, "Invalid block/resume transition.");
         tasks.set(task.taskId, {
           ...task,
@@ -487,6 +512,18 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
                 idleReminders: 0,
               }
             : {}),
+        });
+        break;
+      }
+      case "task.continuationRequested": {
+        const task = requireTask(tasks, event.taskId, offset + 1);
+        if (task.state !== "running")
+          throw eventError(offset + 1, "Only running tasks may request continuation.");
+        tasks.set(task.taskId, {
+          ...task,
+          resumeReason: event.reason,
+          resumeCount: (task.resumeCount ?? 0) + 1,
+          idleReminders: 0,
         });
         break;
       }
@@ -507,9 +544,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         const task = requireTask(tasks, event.taskId, offset + 1);
         if (
           task.state !== "pending" ||
-          (task.dependencyTaskIds ?? []).some(
-            (id) => tasks.get(id)?.state !== "completed",
-          )
+          (task.dependencyTaskIds ?? []).some((id) => tasks.get(id)?.state !== "completed")
         )
           throw eventError(offset + 1, "Task is not ready for dispatch.");
         tasks.set(task.taskId, {
@@ -525,9 +560,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         tasks.set(task.taskId, {
           ...task,
           executions: [
-            ...task.executions.filter(
-              (e) => e.executionId !== event.execution.executionId,
-            ),
+            ...task.executions.filter((e) => e.executionId !== event.execution.executionId),
             event.execution,
           ],
         });
@@ -559,8 +592,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
     state = "paused";
     pauseReason = {
       kind: "manual",
-      message:
-        "Legacy run is read-only. Start a new explicit-protocol run to continue this work.",
+      message: "Legacy run is read-only. Start a new explicit-protocol run to continue this work.",
     };
   }
   return deepFreeze({
@@ -573,9 +605,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
     ...(first.targets === undefined
       ? {}
       : { targets: first.targets.map((target) => ({ ...target })) }),
-    ...(first.workerModel === undefined
-      ? {}
-      : { workerModel: first.workerModel }),
+    ...(first.workerModel === undefined ? {} : { workerModel: first.workerModel }),
     ...(first.workerReasoningEffort === undefined
       ? {}
       : { workerReasoningEffort: first.workerReasoningEffort }),
@@ -587,11 +617,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
     ...(error === undefined ? {} : { error }),
   });
 }
-export function validateSwarmRunEvent(
-  value: unknown,
-  index = 0,
-  legacy = false,
-): SwarmRunEvent {
+export function validateSwarmRunEvent(value: unknown, index = 0, legacy = false): SwarmRunEvent {
   const location = `Event ${index + 1}`;
   plain(value, location);
   switch (value.type) {
@@ -608,9 +634,7 @@ export function validateSwarmRunEvent(
       if (value.roleModels !== undefined) validateSwarmRoleModels(value.roleModels);
       if (value.targets !== undefined) {
         if (!Array.isArray(value.targets) || value.targets.length === 0)
-          throw new SwarmValidationError(
-            `${location}.targets must be a non-empty array.`,
-          );
+          throw new SwarmValidationError(`${location}.targets must be a non-empty array.`);
         value.targets.forEach((target, i) => {
           plain(target, `${location}.targets[${i}]`);
           assertNonEmptyString(target.scope, `${location}.targets[${i}].scope`);
@@ -632,8 +656,13 @@ export function validateSwarmRunEvent(
     case "run.systemFailureRecovered":
       for (const key of ["taskId", "reason", "ownerSessionId", "ownerPrincipalId"])
         assertNonEmptyString(value[key], `${location}.${key}`);
-      if (value.classification !== "owner-session-busy-transport" && value.classification !== "owner-session-superseded-transport")
-        throw new SwarmValidationError("Recovery requires an explicit supported owner-session transport classification.");
+      if (
+        value.classification !== "owner-session-busy-transport" &&
+        value.classification !== "owner-session-superseded-transport"
+      )
+        throw new SwarmValidationError(
+          "Recovery requires an explicit supported owner-session transport classification.",
+        );
       for (const key of ["expectedTaskFailureIndex", "expectedRunFailureIndex"])
         if (!Number.isSafeInteger(value[key]) || Number(value[key]) < 1)
           throw new SwarmValidationError(`${location}.${key} must be a positive event index.`);
@@ -649,6 +678,7 @@ export function validateSwarmRunEvent(
       break;
     case "task.blocked":
     case "task.resumed":
+    case "task.continuationRequested":
       assertNonEmptyString(value.taskId, `${location}.taskId`);
       assertNonEmptyString(value.reason, `${location}.reason`);
       break;
@@ -663,14 +693,8 @@ export function validateSwarmRunEvent(
     case "task.artifact":
       assertNonEmptyString(value.taskId, `${location}.taskId`);
       plain(value.artifact, location);
-      if (
-        Object.keys(value.artifact).some(
-          (key) => !["uri", "kind", "summary"].includes(key),
-        )
-      )
-        throw new SwarmValidationError(
-          "Artifacts contain references and summaries only.",
-        );
+      if (Object.keys(value.artifact).some((key) => !["uri", "kind", "summary"].includes(key)))
+        throw new SwarmValidationError("Artifacts contain references and summaries only.");
       assertNonEmptyString(value.artifact.uri, "artifact.uri");
       assertNonEmptyString(value.artifact.summary, "artifact.summary");
       if (
@@ -685,16 +709,9 @@ export function validateSwarmRunEvent(
       assertNonEmptyString(value.taskId, `${location}.taskId`);
       plain(value.execution, location);
       assertNonEmptyString(value.execution.executionId, "executionId");
-      for (const key of [
-        "delegationId",
-        "sessionId",
-        "transcriptRef",
-        "model",
-        "reasoningEffort",
-      ])
+      for (const key of ["delegationId", "sessionId", "transcriptRef", "model", "reasoningEffort"])
         optionalText(value.execution, key, location);
-      if (value.execution.usage !== undefined)
-        validateUsage(value.execution.usage, location);
+      if (value.execution.usage !== undefined) validateUsage(value.execution.usage, location);
       if (value.execution.usageByModel !== undefined) {
         if (!Array.isArray(value.execution.usageByModel))
           throw new SwarmValidationError("usageByModel must be an array.");
@@ -728,9 +745,16 @@ export function validateSwarmRunEvent(
       if (legacy) json(value.error, `${location}.error`);
       else assertNonEmptyString(value.error, `${location}.error`);
       optionalTextArray(value, "changeRefs", location);
-      if (value.failureOrigin !== undefined && value.failureOrigin !== "runtime" && value.failureOrigin !== "agent")
+      if (
+        value.failureOrigin !== undefined &&
+        value.failureOrigin !== "runtime" &&
+        value.failureOrigin !== "agent"
+      )
         throw new SwarmValidationError("Invalid failure origin.");
-      if (value.failureCode !== undefined && (value.failureCode !== "SESSION_BUSY" || value.failureOrigin !== "runtime"))
+      if (
+        value.failureCode !== undefined &&
+        (value.failureCode !== "SESSION_BUSY" || value.failureOrigin !== "runtime")
+      )
         throw new SwarmValidationError("Invalid runtime failure code.");
       break;
     case "task.cancelled":
@@ -767,24 +791,16 @@ function validateUsage(value: unknown, location: string): void {
       value[key] !== undefined &&
       (!Number.isSafeInteger(value[key]) || (value[key] as number) < 0)
     )
-      throw new SwarmValidationError(
-        "Usage must contain nonnegative integer counters.",
-      );
+      throw new SwarmValidationError("Usage must contain nonnegative integer counters.");
   if (
     value.reportedCost !== undefined &&
     (typeof value.reportedCost !== "number" ||
       !Number.isFinite(value.reportedCost) ||
       value.reportedCost < 0)
   )
-    throw new SwarmValidationError(
-      "Reported cost must be finite and nonnegative.",
-    );
+    throw new SwarmValidationError("Reported cost must be finite and nonnegative.");
 }
-function requireTask(
-  tasks: Map<string, SwarmTask>,
-  id: string,
-  index: number,
-): SwarmTask {
+function requireTask(tasks: Map<string, SwarmTask>, id: string, index: number): SwarmTask {
   const task = tasks.get(id);
   if (!task) throw eventError(index, `Unknown task "${id}".`);
   return task;
@@ -804,11 +820,7 @@ export function validateSwarmRoleModels(value: unknown): asserts value is SwarmR
     optionalText(selection, "reasoningEffort", `roleModels.${role}`);
   }
 }
-function assertNotTerminal(
-  state: SwarmRunState,
-  index: number,
-  type: string,
-): void {
+function assertNotTerminal(state: SwarmRunState, index: number, type: string): void {
   if (state === "completed" || state === "failed")
     throw eventError(index, `${type} may not follow a terminal run state.`);
 }
@@ -820,19 +832,14 @@ function validateTask(value: unknown, location: string): void {
   optionalText(value, "idempotencyKey", location);
   optionalText(value, "ownerSessionId", location);
   optionalText(value, "ownerPrincipalId", location);
-  if (
-    !["planner", "worker", "reconciler", "reviewer"].includes(
-      String(value.role),
-    )
-  )
+  if (!["planner", "worker", "reconciler", "reviewer"].includes(String(value.role)))
     throw new SwarmValidationError(`${location}.role is invalid.`);
   assertNonEmptyString(value.objective, `${location}.objective`);
   assertNonEmptyString(value.scope, `${location}.scope`);
 }
 function validatePause(value: unknown, location: string): void {
   plain(value, location);
-  if (value.kind === "manual")
-    assertNonEmptyString(value.message, `${location}.message`);
+  if (value.kind === "manual") assertNonEmptyString(value.message, `${location}.message`);
   else if (value.kind === "environmental") {
     if (value.operation !== "worktree.create" || value.attempts !== 3)
       throw new SwarmValidationError(`${location} is invalid.`);
@@ -842,31 +849,17 @@ function validatePause(value: unknown, location: string): void {
     optionalText(value, "category", location);
   } else throw new SwarmValidationError(`${location}.kind is invalid.`);
 }
-function optionalJson(
-  value: Record<string, unknown>,
-  key: string,
-  location: string,
-): void {
+function optionalJson(value: Record<string, unknown>, key: string, location: string): void {
   if (key in value) json(value[key], `${location}.${key}`);
 }
-function optionalText(
-  value: Record<string, unknown>,
-  key: string,
-  location: string,
-): void {
+function optionalText(value: Record<string, unknown>, key: string, location: string): void {
   if (key in value) assertNonEmptyString(value[key], `${location}.${key}`);
 }
-function optionalTextArray(
-  value: Record<string, unknown>,
-  key: string,
-  location: string,
-): void {
+function optionalTextArray(value: Record<string, unknown>, key: string, location: string): void {
   if (!(key in value)) return;
   if (!Array.isArray(value[key]))
     throw new SwarmValidationError(`${location}.${key} must be an array.`);
-  value[key].forEach((item, index) =>
-    assertNonEmptyString(item, `${location}.${key}[${index}]`),
-  );
+  value[key].forEach((item, index) => assertNonEmptyString(item, `${location}.${key}[${index}]`));
 }
 function json(
   value: unknown,
@@ -881,31 +874,20 @@ function json(
   )
     return;
   if (typeof value !== "object" || seen.has(value))
-    throw new SwarmValidationError(
-      `${location} must contain only acyclic JSON values.`,
-    );
+    throw new SwarmValidationError(`${location} must contain only acyclic JSON values.`);
   seen.add(value);
-  if (Array.isArray(value))
-    value.forEach((item, i) => json(item, `${location}[${i}]`, seen));
+  if (Array.isArray(value)) value.forEach((item, i) => json(item, `${location}[${i}]`, seen));
   else {
     plain(value, location);
-    Object.entries(value).forEach(([key, item]) =>
-      json(item, `${location}.${key}`, seen),
-    );
+    Object.entries(value).forEach(([key, item]) => json(item, `${location}.${key}`, seen));
   }
   seen.delete(value);
 }
-function plain(
-  value: unknown,
-  location: string,
-): asserts value is Record<string, unknown> {
+function plain(value: unknown, location: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new SwarmValidationError(`${location} must be an object.`);
 }
-function assertNonEmptyString(
-  value: unknown,
-  location: string,
-): asserts value is string {
+function assertNonEmptyString(value: unknown, location: string): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0)
     throw new SwarmValidationError(`${location} must be a non-empty string.`);
 }

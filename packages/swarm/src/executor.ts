@@ -19,10 +19,7 @@ import {
   type SwarmRoleModels,
   type SwarmArtifactReference,
 } from "./contracts.js";
-import {
-  getSwarmServiceContainer,
-  type SwarmServiceContainer,
-} from "./service-container.js";
+import { getSwarmServiceContainer, type SwarmServiceContainer } from "./service-container.js";
 import {
   tryGetSwarmSharedContextService,
   tryGetSwarmBaselineService,
@@ -90,6 +87,19 @@ interface AgentLaunch {
   readonly error?: string;
   readonly pauseReason?: SwarmPauseReason;
 }
+interface ReservedTaskDispatch {
+  readonly runId: string;
+  readonly ready: ExecutableTask;
+  readonly task: SwarmTask;
+  readonly invocation: InvocationContext;
+  readonly executionId: string;
+  readonly launchInput: Readonly<Record<string, SwarmJsonValue>>;
+  readonly startedAt: string;
+  readonly roleModel?: {
+    readonly model?: string;
+    readonly reasoningEffort?: string;
+  };
+}
 interface AgentOutcome {
   readonly continuationHeld?: boolean;
   readonly ready: ExecutableTask;
@@ -113,25 +123,16 @@ export class SwarmExecutor {
     private readonly factory: SwarmExecutionContext,
     private readonly options: SwarmSourceOptions,
   ) {
-    this.serviceContainer =
-      options.serviceContainer ?? getSwarmServiceContainer();
+    this.serviceContainer = options.serviceContainer ?? getSwarmServiceContainer();
   }
-  async create(
-    input: SwarmRunCreateInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async create(input: SwarmRunCreateInput, invocation: InvocationContext): Promise<SwarmRun> {
     const objective = requiredString(input.objective, "objective");
-    const scope = requiredString(
-      input.scope ?? callerWorkspace(invocation),
-      "scope",
-    );
+    const scope = requiredString(input.scope ?? callerWorkspace(invocation), "scope");
     const runId =
-      optionalString(input.runId, "runId") ??
-      createSwarmRunId(callerSessionId(invocation));
+      optionalString(input.runId, "runId") ?? createSwarmRunId(callerSessionId(invocation));
     const targetRef = optionalTrimmed(input.targetRef, "targetRef");
     const targetHead = optionalTrimmed(input.targetHead, "targetHead");
-    const targets =
-      input.targets === undefined ? undefined : normalizeTargets(input.targets);
+    const targets = input.targets === undefined ? undefined : normalizeTargets(input.targets);
     const workerModel = optionalString(input.workerModel, "workerModel");
     const workerReasoningEffort = optionalString(
       input.workerReasoningEffort,
@@ -140,7 +141,11 @@ export class SwarmExecutor {
     if (input.roleModels !== undefined) validateSwarmRoleModels(input.roleModels);
     const roleModels: SwarmRoleModels = Object.fromEntries(
       (["planner", "reviewer", "worker", "reconciler"] as const).flatMap((role) => {
-        const selection = this.resolveRoleModel(role, { ...input, workerModel, workerReasoningEffort });
+        const selection = this.resolveRoleModel(role, {
+          ...input,
+          workerModel,
+          workerReasoningEffort,
+        });
         return selection?.model ? [[role, selection]] : [];
       }),
     );
@@ -155,15 +160,11 @@ export class SwarmExecutor {
     };
     if (input.fresh !== true) this.reuseCallerSessions.add(runId);
     this.viewInvocations.set(runId, invocation);
-    await this.options.eventStore.create(
-      runId,
-      objective,
-      scope,
-      targetRef,
-      targetHead,
-      targets,
-      { ...(workerModel === undefined ? {} : { workerModel }), ...(workerReasoningEffort === undefined ? {} : { workerReasoningEffort }), ...(Object.keys(roleModels).length ? { roleModels } : {}) },
-    );
+    await this.options.eventStore.create(runId, objective, scope, targetRef, targetHead, targets, {
+      ...(workerModel === undefined ? {} : { workerModel }),
+      ...(workerReasoningEffort === undefined ? {} : { workerReasoningEffort }),
+      ...(Object.keys(roleModels).length ? { roleModels } : {}),
+    });
     await this.append(runId, [{ type: "task.added", task: root }]);
     return this.requireRun(runId);
   }
@@ -172,17 +173,11 @@ export class SwarmExecutor {
   }
   async list(): Promise<readonly SwarmRun[]> {
     return Promise.all(
-      (await this.options.eventStore.list()).map((runId) =>
-        this.requireRun(runId),
-      ),
+      (await this.options.eventStore.list()).map((runId) => this.requireRun(runId)),
     );
   }
-  async listAuthorized(
-    invocation: InvocationContext,
-  ): Promise<readonly SwarmRun[]> {
-    return (await this.list()).filter((run) =>
-      this.canReadRun(run, invocation),
-    );
+  async listAuthorized(invocation: InvocationContext): Promise<readonly SwarmRun[]> {
+    return (await this.list()).filter((run) => this.canReadRun(run, invocation));
   }
   /** The chat panel shows participation, not every run the account may inspect. */
   async listEvidence(invocation: InvocationContext): Promise<readonly SwarmRun[]> {
@@ -190,33 +185,22 @@ export class SwarmExecutor {
       Boolean(this.callerTask(run, invocation)),
     );
   }
-  async getAuthorized(
-    input: SwarmRunInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async getAuthorized(input: SwarmRunInput, invocation: InvocationContext): Promise<SwarmRun> {
     const run = await this.get(input);
     if (!this.canReadRun(run, invocation))
       throw new Error("Caller does not share this run owner identity.");
     return run;
   }
-  async getRootAuthorized(
-    input: SwarmRunInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async getRootAuthorized(input: SwarmRunInput, invocation: InvocationContext): Promise<SwarmRun> {
     const run = await this.getAuthorized(input, invocation);
     if (run.legacyReadOnly)
-      throw new Error(
-        "Legacy runs are read-only. Start a new explicit-protocol run.",
-      );
+      throw new Error("Legacy runs are read-only. Start a new explicit-protocol run.");
     const caller = this.callerTask(run, invocation);
     if (!caller || caller.parentTaskId !== undefined)
       throw new Error("Only the root owner controls the run.");
     return run;
   }
-  async openEvidence(
-    runId: string,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async openEvidence(runId: string, invocation: InvocationContext): Promise<SwarmRun> {
     const run = await this.getAuthorized({ runId }, invocation);
     if (this.callerTask(run, invocation)) this.viewInvocations.set(runId, invocation);
     await publishSwarmRunView(
@@ -228,14 +212,21 @@ export class SwarmExecutor {
     return run;
   }
   async readEvidence(
-    input: { readonly runId: string; readonly taskId: string; readonly uri: string; readonly offset?: number },
+    input: {
+      readonly runId: string;
+      readonly taskId: string;
+      readonly uri: string;
+      readonly offset?: number;
+    },
     invocation: InvocationContext,
   ) {
     const run = await this.getAuthorized(input, invocation);
     const reader = tryGetSwarmTranscriptReaderService(this.serviceContainer);
-    return readSwarmEvidenceFile(run, input, reader
-      ? (request) => reader.read(request, invocation)
-      : undefined);
+    return readSwarmEvidenceFile(
+      run,
+      input,
+      reader ? (request) => reader.read(request, invocation) : undefined,
+    );
   }
   private canReadRun(run: SwarmRun, invocation: InvocationContext): boolean {
     if (!optionalCallerSessionId(invocation)) return false;
@@ -244,10 +235,7 @@ export class SwarmExecutor {
     // Historical runs without identity metadata retain their original owner-only path.
     return Boolean(this.callerTask(run, invocation));
   }
-  private callerTask(
-    run: SwarmRun,
-    invocation: InvocationContext,
-  ): SwarmTask | undefined {
+  private callerTask(run: SwarmRun, invocation: InvocationContext): SwarmTask | undefined {
     const sessionId = optionalCallerSessionId(invocation);
     const root = run.tasks.find((task) => task.parentTaskId === undefined);
     if (run.legacyReadOnly && sessionId && root) {
@@ -255,9 +243,7 @@ export class SwarmExecutor {
         ? "owner." + run.runId.slice("marshal-swarm.".length)
         : run.runId;
       try {
-        return parseSwarmRunOwnerSessionId(canonical) === sessionId
-          ? root
-          : undefined;
+        return parseSwarmRunOwnerSessionId(canonical) === sessionId ? root : undefined;
       } catch {
         return undefined;
       }
@@ -283,9 +269,17 @@ export class SwarmExecutor {
     if (name === "list" || name === "get") {
       const run = await this.getAuthorized({ runId }, invocation);
       if (name === "list") return run.tasks;
-      const task = run.tasks.find((entry) => entry.taskId === requiredString(input.taskId, "taskId"));
+      const task = run.tasks.find(
+        (entry) => entry.taskId === requiredString(input.taskId, "taskId"),
+      );
       if (!task) throw new Error("Unknown task.");
       return task;
+    }
+    if (name === "complete") {
+      const output = await this.completeNode(runId, input, invocation);
+      await this.finishRun(runId);
+      this.wakeDrive(runId, this.viewInvocations.get(runId) ?? invocation);
+      return output;
     }
     const output = await this.withStateTransition(async () => {
       const run = await this.requireRun(runId);
@@ -298,9 +292,7 @@ export class SwarmExecutor {
       const task = run.tasks.find((t) => t.taskId === taskId);
       if (!task) throw new Error("Unknown task.");
       if (run.legacyReadOnly)
-        throw new Error(
-          "Legacy runs are read-only. Start a new explicit-protocol run.",
-        );
+        throw new Error("Legacy runs are read-only. Start a new explicit-protocol run.");
       if (run.state !== "running") throw new Error("Run is not running.");
       if (
         caller.taskId !== task.taskId &&
@@ -308,8 +300,7 @@ export class SwarmExecutor {
       )
         throw new Error("Only the owning task may change this node.");
       if (name === "launch") {
-        if (task.role !== "planner")
-          throw new Error("Role cannot launch children.");
+        if (task.role !== "planner") throw new Error("Role cannot launch children.");
         const key = requiredString(input.idempotencyKey, "idempotencyKey");
         const local = requiredString(input.taskId, "taskId");
         if (!/^[A-Za-z0-9._-]+$/.test(local))
@@ -331,31 +322,23 @@ export class SwarmExecutor {
           if (
             ["taskId", "role", "objective", "scope", "dependencyTaskIds"].some(
               (k) =>
-                JSON.stringify(
-                  (prior as unknown as Record<string, unknown>)[k],
-                ) !==
-                JSON.stringify(
-                  (definition as unknown as Record<string, unknown>)[k],
-                ),
+                JSON.stringify((prior as unknown as Record<string, unknown>)[k]) !==
+                JSON.stringify((definition as unknown as Record<string, unknown>)[k]),
             )
           )
             throw new Error("Idempotency key was used with different input.");
           return prior;
         }
-        if (task.state !== "running")
-          throw new Error("Only running parents launch children.");
+        if (task.state !== "running") throw new Error("Only running parents launch children.");
         if (!permittedScopeNames(run, task).includes(definition.scope))
           throw new Error("Child scope is not a declared repository target.");
         for (const id of definition.dependencyTaskIds ?? []) {
           if (id === task.taskId || task.taskId.startsWith(`${id}/`))
             throw new Error("A child cannot depend on its owner or ancestor.");
-          if (!run.tasks.some((t) => t.taskId === id))
-            throw new Error("Unknown dependency.");
+          if (!run.tasks.some((t) => t.taskId === id)) throw new Error("Unknown dependency.");
         }
         await this.append(runId, [{ type: "task.added", task: definition }]);
-        return (await this.requireRun(runId)).tasks.find(
-          (t) => t.taskId === definition.taskId,
-        );
+        return (await this.requireRun(runId)).tasks.find((t) => t.taskId === definition.taskId);
       }
       if (name === "resume") {
         await this.append(runId, [
@@ -365,10 +348,18 @@ export class SwarmExecutor {
             reason: requiredString(input.reason, "reason"),
           },
         ]);
+      } else if (name === "continue") {
+        if (task.state !== "running")
+          throw new Error("Only running tasks may request another turn.");
+        await this.append(runId, [
+          {
+            type: "task.continuationRequested",
+            taskId,
+            reason: requiredString(input.reason, "reason"),
+          },
+        ]);
       } else if (task.state !== "running")
-        throw new Error(
-          "Only running tasks may change state or publish artifacts.",
-        );
+        throw new Error("Only running tasks may change state or publish artifacts.");
       else if (name === "publishArtifact") {
         await this.append(runId, [
           {
@@ -384,77 +375,22 @@ export class SwarmExecutor {
             ? { type: "task.blocked", taskId, reason }
             : { type: "task.failed", taskId, error: reason, failureOrigin: "agent" },
         ]);
-      } else if (name === "complete") {
-        const commits = optionalChangeRefs(input.commits) ?? [];
-        const event: SwarmRunUpdateEvent = {
-          type: "task.completed",
-          taskId,
-          changeRefs: commits,
-        };
-        replaySwarmRun([...(await this.options.eventStore.read(runId)), event]);
-        if (task.delegationId) {
-          const completed = await this.delegationCall(
-            "runtime.delegation.complete",
-            { delegationId: task.delegationId },
-            invocation,
-          );
-          if (completed.error)
-            throw new Error(
-              errorText(completed.error, "Completion integration failed."),
-            );
-          const result = recordOf(completed.result?.output);
-          if (result?.error)
-            throw new Error(
-              errorText(result.error, "Completion integration failed."),
-            );
-          if (result?.finalized !== true || result.state !== "done")
-            throw new Error("Runtime did not finalize task completion.");
-          const receipt = executionReceipt(task, result);
-          await this.append(runId, [
-            ...(receipt ? [receipt] : []),
-            {
-              ...event,
-              ...(stringValue(recordOf(result.result)?.integrationWarning)
-                ? {
-                    result: {
-                      integrationWarning: stringValue(
-                        recordOf(result.result)?.integrationWarning,
-                      )!,
-                    },
-                  }
-                : {}),
-              // Declared task outputs are distinct from the native checkout's
-              // integration refs. Finalization still validates native ownership;
-              // it does not verify or replace the caller's declared commits.
-              changeRefs: input.commits !== undefined
-                ? commits
-                : optionalChangeRefs(result?.changeRefs) ?? commits,
-            },
-          ]);
-        } else await this.append(runId, [event]);
       } else throw new Error(`Unknown node operation ${name}.`);
-      return (await this.requireRun(runId)).tasks.find(
-        (t) => t.taskId === taskId,
-      );
+      return (await this.requireRun(runId)).tasks.find((t) => t.taskId === taskId);
     });
     await this.finishRun(runId);
     if (
       name === "launch" ||
       name === "resume" ||
+      name === "continue" ||
       name === "complete" ||
       name === "block" ||
       name === "fail"
     )
-      void this.drive(
-        { runId },
-        this.viewInvocations.get(runId) ?? invocation,
-      ).catch(() => undefined);
+      this.wakeDrive(runId, this.viewInvocations.get(runId) ?? invocation);
     return output;
   }
-  async cancel(
-    input: SwarmRunCancelInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async cancel(input: SwarmRunCancelInput, invocation: InvocationContext): Promise<SwarmRun> {
     const runId = requiredString(input.runId, "runId");
     const ownedRun = await this.getRootAuthorized({ runId }, invocation);
     if (this.callerTask(ownedRun, invocation)?.parentTaskId !== undefined)
@@ -485,10 +421,7 @@ export class SwarmExecutor {
     }
     return rootDelegationId === undefined ? run : this.requireRun(runId);
   }
-  async pause(
-    input: SwarmRunPauseInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async pause(input: SwarmRunPauseInput, invocation: InvocationContext): Promise<SwarmRun> {
     const runId = requiredString(input.runId, "runId");
     const ownedRun = await this.getRootAuthorized({ runId }, invocation);
     if (this.callerTask(ownedRun, invocation)?.parentTaskId !== undefined)
@@ -503,10 +436,7 @@ export class SwarmExecutor {
       invocation,
     );
   }
-  async resume(
-    input: SwarmRunInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  async resume(input: SwarmRunInput, invocation: InvocationContext): Promise<SwarmRun> {
     const runId = requiredString(input.runId, "runId");
     const ownedRun = await this.getRootAuthorized({ runId }, invocation);
     if (this.callerTask(ownedRun, invocation)?.parentTaskId !== undefined)
@@ -515,10 +445,7 @@ export class SwarmExecutor {
     let resumed = false;
     const run = await this.withStateTransition(async () => {
       const current = await this.requireRun(runId);
-      if (
-        TERMINAL_RUN_STATES.has(current.state) ||
-        current.state === "running"
-      ) {
+      if (TERMINAL_RUN_STATES.has(current.state) || current.state === "running") {
         return current;
       }
       assertResumableScopes(current);
@@ -541,42 +468,79 @@ export class SwarmExecutor {
       const root = run.tasks.find((task) => task.parentTaskId === undefined)!;
       // Explicit operator classification of a legacy incident is part of the audit.
       // Caller must be the original owner session, not merely a child delegation.
-      if (!root.ownerSessionId || !root.ownerPrincipalId || root.ownerSessionId !== optionalCallerSessionId(invocation) || root.ownerPrincipalId !== invocation.principal.id)
+      if (
+        !root.ownerSessionId ||
+        !root.ownerPrincipalId ||
+        root.ownerSessionId !== optionalCallerSessionId(invocation) ||
+        root.ownerPrincipalId !== invocation.principal.id
+      )
         throw new Error("Only the original root owner session may recover a system failure.");
       const event: SwarmRunUpdateEvent = {
-        type: "run.systemFailureRecovered", taskId: root.taskId,
+        type: "run.systemFailureRecovered",
+        taskId: root.taskId,
         classification: input.classification,
         expectedTaskFailureIndex: input.expectedTaskFailureIndex,
         expectedRunFailureIndex: input.expectedRunFailureIndex,
         reason: requiredString(input.reason, "reason"),
-        ownerSessionId: root.ownerSessionId, ownerPrincipalId: root.ownerPrincipalId,
+        ownerSessionId: root.ownerSessionId,
+        ownerPrincipalId: root.ownerPrincipalId,
       };
-      const prior = events.find((value) => value.type === "run.systemFailureRecovered" &&
-        value.expectedTaskFailureIndex === input.expectedTaskFailureIndex && value.expectedRunFailureIndex === input.expectedRunFailureIndex);
+      const prior = events.find(
+        (value) =>
+          value.type === "run.systemFailureRecovered" &&
+          value.expectedTaskFailureIndex === input.expectedTaskFailureIndex &&
+          value.expectedRunFailureIndex === input.expectedRunFailureIndex,
+      );
       if (prior) {
-        if (JSON.stringify(prior) !== JSON.stringify(event)) throw new Error("Recovery reference was already used with different input.");
+        if (JSON.stringify(prior) !== JSON.stringify(event))
+          throw new Error("Recovery reference was already used with different input.");
         return run;
       }
       // Validate the complete transition before one durable append. Never dispatch
       // here: the recovered run remains paused until a separate explicit resume.
       replaySwarmRun([...events, event]);
       const delegationId = requiredString(root.delegationId, "Root delegationId");
-      const response = await this.delegationCall("runtime.delegation.recover", {
-        delegationId,
-        expectedError: input.classification === "owner-session-superseded-transport" ? SWARM_OWNER_SESSION_SUPERSEDED_ERROR : SWARM_OWNER_SESSION_BUSY_ERROR,
-        reason: event.reason,
-        idempotencyKey: `swarm-recovery-${createHash("sha256").update(JSON.stringify([runId, input.expectedTaskFailureIndex, input.expectedRunFailureIndex])).digest("hex")}`,
-      }, invocation);
+      const response = await this.delegationCall(
+        "runtime.delegation.recover",
+        {
+          delegationId,
+          expectedError:
+            input.classification === "owner-session-superseded-transport"
+              ? SWARM_OWNER_SESSION_SUPERSEDED_ERROR
+              : SWARM_OWNER_SESSION_BUSY_ERROR,
+          reason: event.reason,
+          idempotencyKey: `swarm-recovery-${createHash("sha256")
+            .update(
+              JSON.stringify([
+                runId,
+                input.expectedTaskFailureIndex,
+                input.expectedRunFailureIndex,
+              ]),
+            )
+            .digest("hex")}`,
+        },
+        invocation,
+      );
       const recovered = recordOf(response.result?.output);
-      if (recovered?.delegationId !== delegationId || recovered.sessionId !== root.ownerSessionId ||
-          recovered.finalized === true || (recovered.state !== "running" && recovered.state !== "done") || recovered.error !== undefined) {
-        throw new Error("Native root delegation recovery did not confirm the same live owner session; Swarm remains failed.");
+      if (
+        recovered?.delegationId !== delegationId ||
+        recovered.sessionId !== root.ownerSessionId ||
+        recovered.finalized === true ||
+        (recovered.state !== "running" && recovered.state !== "done") ||
+        recovered.error !== undefined
+      ) {
+        throw new Error(
+          "Native root delegation recovery did not confirm the same live owner session; Swarm remains failed.",
+        );
       }
       await this.append(runId, [event]);
       return this.requireRun(runId);
     });
   }
-  async setRoleModels(input: SwarmRunSetRoleModelsInput, invocation: InvocationContext): Promise<SwarmRun> {
+  async setRoleModels(
+    input: SwarmRunSetRoleModelsInput,
+    invocation: InvocationContext,
+  ): Promise<SwarmRun> {
     const runId = requiredString(input.runId, "runId");
     await this.getRootAuthorized({ runId }, invocation);
     validateSwarmRoleModels(input.roleModels);
@@ -585,11 +549,19 @@ export class SwarmExecutor {
     return this.withStateTransition(async () => {
       const current = await this.requireRun(runId);
       const root = current.tasks.find((task) => task.parentTaskId === undefined)!;
-      if (!root.ownerSessionId || !root.ownerPrincipalId || root.ownerSessionId !== optionalCallerSessionId(invocation) || root.ownerPrincipalId !== invocation.principal.id)
+      if (
+        !root.ownerSessionId ||
+        !root.ownerPrincipalId ||
+        root.ownerSessionId !== optionalCallerSessionId(invocation) ||
+        root.ownerPrincipalId !== invocation.principal.id
+      )
         throw new Error("Only the original root owner may update role models.");
       const event: SwarmRunUpdateEvent = {
-        type: "run.roleModelsUpdated", roleModels: input.roleModels, reason,
-        ownerSessionId: root.ownerSessionId, ownerPrincipalId: root.ownerPrincipalId,
+        type: "run.roleModelsUpdated",
+        roleModels: input.roleModels,
+        reason,
+        ownerSessionId: root.ownerSessionId,
+        ownerPrincipalId: root.ownerPrincipalId,
       };
       replaySwarmRun([...(await this.options.eventStore.read(runId)), event]);
       await this.append(runId, [event]);
@@ -597,10 +569,7 @@ export class SwarmExecutor {
       return this.requireRun(runId);
     });
   }
-  drive(
-    input: SwarmRunInput,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  drive(input: SwarmRunInput, invocation: InvocationContext): Promise<SwarmRun> {
     const runId = requiredString(input.runId, "runId");
     this.viewInvocations.set(runId, invocation);
     const existing = this.driveInFlight.get(runId);
@@ -614,27 +583,33 @@ export class SwarmExecutor {
     this.driveInFlight.set(runId, drive);
     return drive;
   }
-  private async driveLoop(
-    runId: string,
-    invocation: InvocationContext,
-  ): Promise<SwarmRun> {
+  private wakeDrive(runId: string, invocation: InvocationContext): void {
+    const active = this.driveInFlight.get(runId);
+    if (!active) {
+      void this.drive({ runId }, invocation).catch(() => undefined);
+      return;
+    }
+    void active
+      .finally(() => {
+        if (!this.driveInFlight.has(runId))
+          void this.drive({ runId }, invocation).catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }
+  private async driveLoop(runId: string, invocation: InvocationContext): Promise<SwarmRun> {
     const inFlight = new Map<string, Promise<SettledTask>>();
     const surfaced = new Map<string, string>();
     while (true) {
       const run = await this.requireRun(runId);
       if (run.legacyReadOnly)
-        throw new Error(
-          "Legacy runs are read-only. Start a new explicit-protocol run.",
-        );
+        throw new Error("Legacy runs are read-only. Start a new explicit-protocol run.");
       if (TERMINAL_RUN_STATES.has(run.state)) return run;
       if (run.state === "paused") return run;
       const failedDependencies = run.tasks
         .filter((task) => task.state === "pending")
         .flatMap((task) => {
           const failed = (task.dependencyTaskIds ?? []).filter(
-            (id) =>
-              run.tasks.find((dependency) => dependency.taskId === id)
-                ?.state === "failed",
+            (id) => run.tasks.find((dependency) => dependency.taskId === id)?.state === "failed",
           );
           return failed.length
             ? [
@@ -661,8 +636,12 @@ export class SwarmExecutor {
           ready.childResults,
         ]);
         if (surfaced.get(taskId) === signature) continue;
-        if (!ready.task.resumeReason && ready.childResults.length > 0 &&
-            ready.task.childAttentionSignature === childAttentionSignature(ready)) continue;
+        if (
+          !ready.task.resumeReason &&
+          ready.childResults.length > 0 &&
+          ready.task.childAttentionSignature === childAttentionSignature(ready)
+        )
+          continue;
         surfaced.set(taskId, signature);
         inFlight.set(
           taskId,
@@ -675,8 +654,12 @@ export class SwarmExecutor {
       if (inFlight.size === 0) {
         await this.finishRun(runId);
         const latest = await this.requireRun(runId);
-        if (executableSwarmTasks(latest).some((ready) =>
-          this.heldWakeups.has(JSON.stringify([runId, ready.task.taskId])))) continue;
+        if (
+          executableSwarmTasks(latest).some((ready) =>
+            this.heldWakeups.has(JSON.stringify([runId, ready.task.taskId])),
+          )
+        )
+          continue;
         return latest;
       }
       const settled = await Promise.race([
@@ -709,41 +692,58 @@ export class SwarmExecutor {
     if (this.heldContinuations.has(key)) return;
     // A busy owner can itself be calling a Swarm tool. Never await its turn
     // from that tool: return the held result and observe idle in the background.
-    const waiting = Promise.resolve().then(async () => {
-      let snapshot: Readonly<Record<string, unknown>> | undefined;
-      do {
-        [snapshot] = await Promise.all([
-          this.waitForAgent(delegationId, invocation),
-          new Promise<void>((resolve) => setTimeout(resolve, 250)),
-        ]);
-        if (await this.stopped(runId)) return;
-      } while (snapshot?.state === "running" || snapshot?.state === "pending");
-      if (!["done", "completed", "idle"].includes(stringValue(snapshot?.state) ?? ""))
-        throw new Error(errorText(snapshot?.error, "Held continuation native wait did not reach idle."));
-      const current = await this.requireRun(runId);
-      const task = current.tasks.find((entry) => entry.taskId === ready.task.taskId);
-      if (current.state !== "running" || task?.state !== "running" ||
-          task.delegationId !== delegationId || task.resumeCount !== ready.task.resumeCount) return;
-      this.heldContinuations.delete(key);
-      this.heldWakeups.add(key);
-      await this.drive({ runId }, invocation);
-      // If idle arrived during the preceding drive's final await, consume the
-      // still-pending wake in a fresh drive. A consumed wake never dispatches twice.
-      if (this.heldWakeups.has(key) && !(await this.stopped(runId)))
+    const waiting = Promise.resolve()
+      .then(async () => {
+        let snapshot: Readonly<Record<string, unknown>> | undefined;
+        do {
+          [snapshot] = await Promise.all([
+            this.waitForAgent(delegationId, invocation),
+            new Promise<void>((resolve) => setTimeout(resolve, 250)),
+          ]);
+          if (await this.stopped(runId)) return;
+        } while (snapshot?.state === "running" || snapshot?.state === "pending");
+        if (!["done", "completed", "idle"].includes(stringValue(snapshot?.state) ?? ""))
+          throw new Error(
+            errorText(snapshot?.error, "Held continuation native wait did not reach idle."),
+          );
+        const current = await this.requireRun(runId);
+        const task = current.tasks.find((entry) => entry.taskId === ready.task.taskId);
+        if (
+          current.state !== "running" ||
+          task?.state !== "running" ||
+          task.delegationId !== delegationId ||
+          task.resumeCount !== ready.task.resumeCount
+        )
+          return;
+        this.heldContinuations.delete(key);
+        this.heldWakeups.add(key);
         await this.drive({ runId }, invocation);
-    }).catch(async (error: unknown) => {
-      // A stale pause/cancellation observer cannot fail a newer task attempt.
-      const current = await this.requireRun(runId);
-      const task = current.tasks.find((entry) => entry.taskId === ready.task.taskId);
-      if (current.state !== "running" || task?.state !== "running" ||
-          task.delegationId !== delegationId || task.resumeCount !== ready.task.resumeCount) return;
-      await this.recordOutcome(runId, { ready, error: plainError(error) });
-      await this.finishRun(runId);
-    }).finally(() => {
-      if (this.heldContinuations.get(key) === waiting) this.heldContinuations.delete(key);
-    });
+        // If idle arrived during the preceding drive's final await, consume the
+        // still-pending wake in a fresh drive. A consumed wake never dispatches twice.
+        if (this.heldWakeups.has(key) && !(await this.stopped(runId)))
+          await this.drive({ runId }, invocation);
+      })
+      .catch(async (error: unknown) => {
+        // A stale pause/cancellation observer cannot fail a newer task attempt.
+        const current = await this.requireRun(runId);
+        const task = current.tasks.find((entry) => entry.taskId === ready.task.taskId);
+        if (
+          current.state !== "running" ||
+          task?.state !== "running" ||
+          task.delegationId !== delegationId ||
+          task.resumeCount !== ready.task.resumeCount
+        )
+          return;
+        await this.recordOutcome(runId, { ready, error: plainError(error) });
+        await this.finishRun(runId);
+      })
+      .finally(() => {
+        if (this.heldContinuations.get(key) === waiting) this.heldContinuations.delete(key);
+      });
     this.heldContinuations.set(key, waiting);
-    void waiting.catch((error: unknown) => console.warn("Held continuation recovery failed.", error));
+    void waiting.catch((error: unknown) =>
+      console.warn("Held continuation recovery failed.", error),
+    );
   }
   private async settleTask(
     runId: string,
@@ -778,11 +778,7 @@ export class SwarmExecutor {
       if (pauseReason === undefined) {
         throw new Error(`Paused swarm run "${runId}" has no pause reason.`);
       }
-      await this.pauseAgent(
-        launch.delegationId,
-        pauseReason.message,
-        invocation,
-      );
+      await this.pauseAgent(launch.delegationId, pauseReason.message, invocation);
       return { ready, error: "Run paused." };
     }
     if (current.state !== "running") {
@@ -805,10 +801,7 @@ export class SwarmExecutor {
         { cause: error },
       );
     }
-    const diskFullReason = diskFullPauseReason(
-      delegation?.error,
-      ready.task.taskId,
-    );
+    const diskFullReason = diskFullPauseReason(delegation?.error, ready.task.taskId);
     if (diskFullReason !== undefined) {
       await this.pauseRun(runId, diskFullReason, invocation);
       return { ready, error: diskFullReason.message };
@@ -816,9 +809,7 @@ export class SwarmExecutor {
     const currentTask = (await this.requireRun(runId)).tasks.find(
       (t) => t.taskId === ready.task.taskId,
     );
-    const execution = currentTask?.executions.find(
-      (e) => e.delegationId === launch.delegationId,
-    );
+    const execution = currentTask?.executions.find((e) => e.delegationId === launch.delegationId);
     if (execution && currentTask && delegation) {
       const receipt = executionReceipt(currentTask, delegation);
       if (receipt) await this.append(runId, [receipt]);
@@ -855,32 +846,28 @@ export class SwarmExecutor {
     invocation: InvocationContext,
   ): Promise<AgentLaunch> {
     const task = ready.task;
-    const fieldGuide = (await tryGetSwarmSharedContextService(
-      this.serviceContainer,
-    )?.read(runId)) ?? {
+    const fieldGuide = (await tryGetSwarmSharedContextService(this.serviceContainer)?.read(
+      runId,
+    )) ?? {
       path: "Not configured",
       content: "No shared Field Guide has been configured for this run.",
     };
-    const baseline = await tryGetSwarmBaselineService(
-      this.serviceContainer,
-    )?.resolve(runId, task.scope);
+    const baseline = await tryGetSwarmBaselineService(this.serviceContainer)?.resolve(
+      runId,
+      task.scope,
+    );
     const prompt = promptFor(ready, fieldGuide, run, baseline);
     if (task.state === "pending") {
-      return this.withStateTransition(async () => {
+      const dispatch = await this.withStateTransition(async () => {
         const currentRun = await this.requireRun(runId);
         if (currentRun.state !== "running") {
           return { ready, error: "Run stopped." };
         }
-        const currentTask = currentRun.tasks.find(
-          (entry) => entry.taskId === task.taskId,
-        );
+        const currentTask = currentRun.tasks.find((entry) => entry.taskId === task.taskId);
         if (currentTask === undefined) {
           return { ready, error: `Task "${task.taskId}" no longer exists.` };
         }
-        if (
-          currentTask.state === "running" &&
-          currentTask.delegationId !== undefined
-        ) {
+        if (currentTask.state === "running" && currentTask.delegationId !== undefined) {
           return {
             ready: { ...ready, task: currentTask },
             delegationId: currentTask.delegationId,
@@ -892,7 +879,7 @@ export class SwarmExecutor {
             error: `Task "${task.taskId}" is no longer executable.`,
           };
         }
-        return this.spawnTask(
+        return this.reserveTaskDispatch(
           runId,
           currentRun,
           ready,
@@ -902,12 +889,13 @@ export class SwarmExecutor {
           invocation,
         );
       });
+      return "launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch;
     }
     if ((await this.requireRun(runId)).state !== "running") {
       return { ready, error: "Run stopped." };
     }
-    if (task.executions.at(-1)?.dispatchState === "registered")
-      return this.spawnTask(
+    if (task.executions.at(-1)?.dispatchState === "registered") {
+      const dispatch = await this.reserveTaskDispatch(
         runId,
         run,
         ready,
@@ -916,32 +904,34 @@ export class SwarmExecutor {
         baseline,
         invocation,
       );
-    const delegationId = requiredString(
-      task.delegationId,
-      `Task "${task.taskId}" delegationId`,
-    );
+      return "launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch;
+    }
+    const delegationId = requiredString(task.delegationId, `Task "${task.taskId}" delegationId`);
     if (task.resumeReason) {
       const continued = await this.continueAgent(
         delegationId,
         `Explicit task resolution: ${task.resumeReason}\n${prompt}`,
         invocation,
       );
-      if (continued?.error)
-        return launchFailure(ready, continued, undefined, "continue");
+      if (continued?.error) return launchFailure(ready, continued, undefined, "continue");
       if (continued?.continuationDelivery === "held")
         return { ready, delegationId, continuationHeld: true };
       await this.appendWhileRunning(runId, [
         { type: "task.continued", taskId: task.taskId },
-        ...(ready.childResults.length ? [{ type: "task.childrenNotified" as const, taskId: task.taskId, signature: childAttentionSignature(ready) }] : []),
+        ...(ready.childResults.length
+          ? [
+              {
+                type: "task.childrenNotified" as const,
+                taskId: task.taskId,
+                signature: childAttentionSignature(ready),
+              },
+            ]
+          : []),
       ]);
       return { ready, delegationId };
     }
     if (ready.childResults.length > 0) {
-      const continued = await this.continueAgent(
-        delegationId,
-        prompt,
-        invocation,
-      );
+      const continued = await this.continueAgent(delegationId, prompt, invocation);
       const pauseReason = pauseReasonForError(continued, task.taskId);
       if (pauseReason !== undefined) {
         return {
@@ -970,9 +960,13 @@ export class SwarmExecutor {
       if (continued?.error || stringValue(continued?.delegationId) !== delegationId) {
         return launchFailure(ready, continued, undefined, "continue");
       }
-      await this.appendWhileRunning(runId, [{
-        type: "task.childrenNotified", taskId: task.taskId, signature: childAttentionSignature(ready),
-      }]);
+      await this.appendWhileRunning(runId, [
+        {
+          type: "task.childrenNotified",
+          taskId: task.taskId,
+          signature: childAttentionSignature(ready),
+        },
+      ]);
       return { ready, delegationId };
     }
     return { ready, delegationId };
@@ -990,9 +984,7 @@ export class SwarmExecutor {
       if (currentRun.state !== "running") {
         return { ready, error: "Run stopped." };
       }
-      const currentTask = currentRun.tasks.find(
-        (entry) => entry.taskId === ready.task.taskId,
-      );
+      const currentTask = currentRun.tasks.find((entry) => entry.taskId === ready.task.taskId);
       if (
         currentTask === undefined ||
         currentTask.state !== "running" ||
@@ -1009,7 +1001,7 @@ export class SwarmExecutor {
           delegationId: currentTask.delegationId,
         };
       }
-      return this.spawnTask(
+      return this.reserveTaskDispatch(
         runId,
         currentRun,
         ready,
@@ -1018,28 +1010,37 @@ export class SwarmExecutor {
         baseline,
         invocation,
       );
-    });
+    }).then((dispatch) => ("launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch));
   }
   private resolveRoleModel(
     role: SwarmTaskRole,
-    configuration: Pick<SwarmRunCreateInput, "roleModels" | "workerModel" | "workerReasoningEffort">,
+    configuration: Pick<
+      SwarmRunCreateInput,
+      "roleModels" | "workerModel" | "workerReasoningEffort"
+    >,
     run?: SwarmRun,
   ) {
     // Explicit selections are complete policies: never consult a possibly invalid
     // host default before honoring them, including when replaying a saved run.
     const explicit = configuration.roleModels?.[role];
     if (explicit) return { ...explicit };
-    if (role === "worker" && configuration.workerModel) return {
-      model: configuration.workerModel,
-      reasoningEffort: configuration.workerReasoningEffort ?? DEFAULT_WORKER_REASONING_EFFORT,
-    };
+    if (role === "worker" && configuration.workerModel)
+      return {
+        model: configuration.workerModel,
+        reasoningEffort: configuration.workerReasoningEffort ?? DEFAULT_WORKER_REASONING_EFFORT,
+      };
     const host = tryGetSwarmRoleModelService(this.serviceContainer)?.resolve(role, run);
-    return role === "worker" ? {
-      model: host?.model ?? DEFAULT_WORKER_MODEL,
-      reasoningEffort: configuration.workerReasoningEffort ?? host?.reasoningEffort ?? DEFAULT_WORKER_REASONING_EFFORT,
-    } : host;
+    return role === "worker"
+      ? {
+          model: host?.model ?? DEFAULT_WORKER_MODEL,
+          reasoningEffort:
+            configuration.workerReasoningEffort ??
+            host?.reasoningEffort ??
+            DEFAULT_WORKER_REASONING_EFFORT,
+        }
+      : host;
   }
-  private async spawnTask(
+  private async reserveTaskDispatch(
     runId: string,
     run: SwarmRun,
     ready: ExecutableTask,
@@ -1047,29 +1048,34 @@ export class SwarmExecutor {
     prompt: string,
     baseline: SwarmBaseline | undefined,
     invocation: InvocationContext,
-  ): Promise<AgentLaunch> {
+  ): Promise<ReservedTaskDispatch | AgentLaunch> {
     const parentDelegationId =
       task.parentTaskId === undefined
         ? undefined
-        : run.tasks.find((entry) => entry.taskId === task.parentTaskId)
-            ?.delegationId;
+        : run.tasks.find((entry) => entry.taskId === task.parentTaskId)?.delegationId;
     const configuredRoleModel = this.resolveRoleModel(task.role, run, run);
     const callerSession = optionalCallerSessionId(invocation);
     const reserved =
-      task.executions.at(-1)?.dispatchState === "registered"
-        ? task.executions.at(-1)
-        : undefined;
-    if (reserved?.launchInput && configuredRoleModel?.model &&
+      task.executions.at(-1)?.dispatchState === "registered" ? task.executions.at(-1) : undefined;
+    if (
+      reserved?.launchInput &&
+      configuredRoleModel?.model &&
       (reserved.launchInput.model !== configuredRoleModel.model ||
-        reserved.launchInput.reasoningEffort !== configuredRoleModel.reasoningEffort)) {
-      return { ready, error: `Reserved dispatch "${reserved.executionId}" conflicts with the current ${task.role} model policy; no dispatch was sent.` };
+        reserved.launchInput.reasoningEffort !== configuredRoleModel.reasoningEffort)
+    ) {
+      return {
+        ready,
+        error: `Reserved dispatch "${reserved.executionId}" conflicts with the current ${task.role} model policy; no dispatch was sent.`,
+      };
     }
     const roleModel = reserved?.launchInput
-      ? { model: stringValue(reserved.launchInput.model), reasoningEffort: stringValue(reserved.launchInput.reasoningEffort) }
+      ? {
+          model: stringValue(reserved.launchInput.model),
+          reasoningEffort: stringValue(reserved.launchInput.reasoningEffort),
+        }
       : configuredRoleModel;
     const executionId =
-      reserved?.executionId ??
-      `swarm:${runId}:${task.taskId}:${task.executions.length}`;
+      reserved?.executionId ?? `swarm:${runId}:${task.taskId}:${task.executions.length}`;
     // Tree paths are logical identities, not filenames. The delegation store
     // requires one portable path segment; hashing also bounds deeply nested IDs.
     const delegationKey = `swarm-${createHash("sha256").update(executionId).digest("hex")}`;
@@ -1086,9 +1092,7 @@ export class SwarmExecutor {
         : { reasoningEffort: roleModel.reasoningEffort }),
       ...(parentDelegationId === undefined ? {} : { parentDelegationId }),
       ...(baseline?.head === undefined ? {} : { baseRef: baseline.head }),
-      ...(this.reuseCallerSessions.has(runId) &&
-      task.parentTaskId === undefined &&
-      callerSession
+      ...(this.reuseCallerSessions.has(runId) && task.parentTaskId === undefined && callerSession
         ? { backend: callerSession }
         : {}),
     };
@@ -1105,17 +1109,25 @@ export class SwarmExecutor {
             launchInput,
             delegationId: delegationKey,
             ...(roleModel?.model ? { model: roleModel.model } : {}),
-            ...(roleModel?.reasoningEffort
-              ? { reasoningEffort: roleModel.reasoningEffort }
-              : {}),
+            ...(roleModel?.reasoningEffort ? { reasoningEffort: roleModel.reasoningEffort } : {}),
           },
         },
       ]);
-    const spawned = await this.delegationCall(
-      "runtime.delegation.spawn",
-      launchInput,
+    return {
+      runId,
+      ready,
+      task,
       invocation,
-    );
+      executionId,
+      launchInput,
+      startedAt: reserved?.startedAt ?? new Date().toISOString(),
+      ...(roleModel === undefined ? {} : { roleModel }),
+    };
+  }
+  private async dispatchTask(dispatch: ReservedTaskDispatch): Promise<AgentLaunch> {
+    const { runId, ready, task, invocation, executionId, launchInput, startedAt, roleModel } =
+      dispatch;
+    const spawned = await this.delegationCall("runtime.delegation.spawn", launchInput, invocation);
     const delegation = recordOf(spawned.result?.output);
     const spawnError = delegation?.error ?? spawned.error;
     const pauseReason = pauseReasonForError(spawnError, task.taskId);
@@ -1133,30 +1145,42 @@ export class SwarmExecutor {
     if (!delegationId) {
       return launchFailure(ready, delegation, spawned.error, "start");
     }
-    await this.append(runId, [
-      {
-        type: "task.execution",
-        taskId: task.taskId,
-        execution: {
-          executionId,
-          kind: "dispatch",
-          dispatchState: "dispatched",
-          startedAt: reserved?.startedAt ?? new Date().toISOString(),
-          delegationId,
-          ...(stringValue(delegation?.sessionId)
-            ? { sessionId: stringValue(delegation?.sessionId) }
-            : {}),
-          ...(stringValue(delegation?.transcriptRef)
-            ? { transcriptRef: stringValue(delegation?.transcriptRef) }
-            : {}),
-          ...(roleModel?.model ? { model: roleModel.model } : {}),
-          ...(roleModel?.reasoningEffort
-            ? { reasoningEffort: roleModel.reasoningEffort }
-            : {}),
+    const recordedTask = await this.withStateTransition(async () => {
+      const run = await this.requireRun(runId);
+      const currentTask = run.tasks.find((entry) => entry.taskId === task.taskId);
+      if (
+        run.state !== "running" ||
+        currentTask?.state !== "running" ||
+        currentTask.executions.at(-1)?.executionId !== executionId
+      ) {
+        return undefined;
+      }
+      await this.append(runId, [
+        {
+          type: "task.execution",
+          taskId: task.taskId,
+          execution: {
+            executionId,
+            kind: "dispatch",
+            dispatchState: "dispatched",
+            startedAt,
+            delegationId,
+            ...(stringValue(delegation?.sessionId)
+              ? { sessionId: stringValue(delegation?.sessionId) }
+              : {}),
+            ...(stringValue(delegation?.transcriptRef)
+              ? { transcriptRef: stringValue(delegation?.transcriptRef) }
+              : {}),
+            ...(roleModel?.model ? { model: roleModel.model } : {}),
+            ...(roleModel?.reasoningEffort ? { reasoningEffort: roleModel.reasoningEffort } : {}),
+          },
         },
-      },
-    ]);
-    return { ready: { ...ready, task }, delegationId };
+      ]);
+      return (await this.requireRun(runId)).tasks.find((entry) => entry.taskId === task.taskId);
+    });
+    return recordedTask
+      ? { ready: { ...ready, task: recordedTask }, delegationId }
+      : { ready, error: `Task "${task.taskId}" stopped while dispatching.` };
   }
   private async waitForAgent(
     delegationId: string,
@@ -1187,20 +1211,11 @@ export class SwarmExecutor {
       (response.error === undefined ? undefined : { error: response.error })
     );
   }
-  private async recordOutcome(
-    runId: string,
-    outcome: AgentOutcome,
-  ): Promise<boolean | void> {
+  private async recordOutcome(runId: string, outcome: AgentOutcome): Promise<boolean | void> {
     if (await this.stopped(runId)) return;
     const run = await this.requireRun(runId);
-    const task = run.tasks.find(
-      (entry) => entry.taskId === outcome.ready.task.taskId,
-    );
-    if (
-      task === undefined ||
-      task.state === "completed" ||
-      task.state === "failed"
-    ) {
+    const task = run.tasks.find((entry) => entry.taskId === outcome.ready.task.taskId);
+    if (task === undefined || task.state === "completed" || task.state === "failed") {
       return;
     }
     if (
@@ -1213,11 +1228,7 @@ export class SwarmExecutor {
       await this.failTask(runId, task, outcome.error, outcome.changeRefs);
       return;
     }
-    if (
-      task.state !== "running" ||
-      task.resumeCount !== outcome.ready.task.resumeCount
-    )
-      return;
+    if (task.state !== "running" || task.resumeCount !== outcome.ready.task.resumeCount) return;
     const liveChildren = run.tasks.some(
       (child) => child.parentTaskId === task.taskId && !isTerminalTask(child),
     );
@@ -1227,28 +1238,25 @@ export class SwarmExecutor {
           type: "task.blocked",
           taskId: task.taskId,
           reason:
-            "Agent remained idle without an explicit outcome after two reminders; explicit resolution is required.",
+            "Agent remained idle without an explicit outcome or continuation request after two reminders; explicit resolution is required.",
         },
       ]);
       return;
     }
     if (!liveChildren && (task.idleReminders ?? 0) < 2 && task.delegationId) {
       const stillRunning =
-        (await this.requireRun(runId)).tasks.find(
-          (t) => t.taskId === task.taskId,
-        )?.state === "running";
+        (await this.requireRun(runId)).tasks.find((t) => t.taskId === task.taskId)?.state ===
+        "running";
       if (!stillRunning) return;
       const invocation = this.viewInvocations.get(runId);
       if (invocation) {
         const continued = await this.continueAgent(
           task.delegationId,
-          "Your conversation is idle but the owned Swarm task remains running. Use swarm.nodes.complete after acceptance, or block/fail with a reason. Conversational final text does not complete the task.",
+          "The owned Swarm task remains running. Continue the work, or use swarm.nodes.complete after acceptance; block/fail only when the task cannot proceed. Conversational final text does not complete the task.",
           invocation,
         );
         if (continued?.continuationDelivery === "held") return true;
-        await this.appendWhileRunning(runId, [
-          { type: "task.reminded", taskId: task.taskId },
-        ]);
+        await this.appendWhileRunning(runId, [{ type: "task.reminded", taskId: task.taskId }]);
       }
     }
     // A conversational final answer is telemetry only. Lifecycle changes require
@@ -1266,7 +1274,9 @@ export class SwarmExecutor {
         taskId: task.taskId,
         error,
         failureOrigin: "runtime",
-        ...(error === SWARM_OWNER_SESSION_BUSY_ERROR ? { failureCode: "SESSION_BUSY" as const } : {}),
+        ...(error === SWARM_OWNER_SESSION_BUSY_ERROR
+          ? { failureCode: "SESSION_BUSY" as const }
+          : {}),
         ...(changeRefs === undefined ? {} : { changeRefs }),
       },
     ]);
@@ -1303,25 +1313,91 @@ export class SwarmExecutor {
       ]);
     });
   }
+  private async completeNode(
+    runId: string,
+    input: Readonly<Record<string, unknown>>,
+    invocation: InvocationContext,
+  ): Promise<SwarmTask | undefined> {
+    const prepared = await this.withStateTransition(async () => {
+      const run = await this.requireRun(runId);
+      const caller = this.callerTask(run, invocation);
+      if (!caller) throw new Error("Caller does not own a task in this run.");
+      const taskId = requiredString(input.taskId, "taskId");
+      const task = run.tasks.find((entry) => entry.taskId === taskId);
+      if (!task) throw new Error("Unknown task.");
+      if (run.legacyReadOnly)
+        throw new Error("Legacy runs are read-only. Start a new explicit-protocol run.");
+      if (run.state !== "running") throw new Error("Run is not running.");
+      if (caller.taskId !== task.taskId)
+        throw new Error("Only the owning task may change this node.");
+      if (task.state !== "running")
+        throw new Error("Only running tasks may change state or publish artifacts.");
+      const commits = optionalChangeRefs(input.commits) ?? [];
+      const event: SwarmRunUpdateEvent = {
+        type: "task.completed",
+        taskId,
+        changeRefs: commits,
+      };
+      replaySwarmRun([...(await this.options.eventStore.read(runId)), event]);
+      return { task, taskId, commits, event };
+    });
+    let result: Record<string, unknown> | undefined;
+    if (prepared.task.delegationId) {
+      const completed = await this.delegationCall(
+        "runtime.delegation.complete",
+        { delegationId: prepared.task.delegationId },
+        invocation,
+      );
+      if (completed.error)
+        throw new Error(errorText(completed.error, "Completion integration failed."));
+      result = recordOf(completed.result?.output);
+      if (result?.error) throw new Error(errorText(result.error, "Completion integration failed."));
+      if (result?.finalized !== true || result.state !== "done")
+        throw new Error("Runtime did not finalize task completion.");
+    }
+    return this.withStateTransition(async () => {
+      const run = await this.requireRun(runId);
+      const caller = this.callerTask(run, invocation);
+      const task = run.tasks.find((entry) => entry.taskId === prepared.taskId);
+      if (!caller || !task || caller.taskId !== task.taskId)
+        throw new Error("Caller no longer owns this task.");
+      if (run.state !== "running" || task.state !== "running")
+        throw new Error("Task is no longer running.");
+      const receipt = result ? executionReceipt(task, result) : undefined;
+      await this.append(runId, [
+        ...(receipt ? [receipt] : []),
+        {
+          ...prepared.event,
+          ...(stringValue(recordOf(result?.result)?.integrationWarning)
+            ? {
+                result: {
+                  integrationWarning: stringValue(recordOf(result?.result)?.integrationWarning)!,
+                },
+              }
+            : {}),
+          changeRefs:
+            input.commits !== undefined
+              ? prepared.commits
+              : (optionalChangeRefs(result?.changeRefs) ?? prepared.commits),
+        },
+      ]);
+      return (await this.requireRun(runId)).tasks.find((entry) => entry.taskId === prepared.taskId);
+    });
+  }
   private async requireRun(runId: string): Promise<SwarmRun> {
     const run = replaySwarmRun(await this.options.eventStore.read(runId));
     return run;
   }
-  private async append(
-    runId: string,
-    events: readonly SwarmRunUpdateEvent[],
-  ): Promise<void> {
+  private async append(runId: string, events: readonly SwarmRunUpdateEvent[]): Promise<void> {
     for (const event of events) {
       await this.options.eventStore.append(runId, event);
     }
-    // The journal is authoritative. A failed presentation must not prevent the
-    // subsequent delegation launch/pause or make a committed mutation look failed.
-    try {
-      await this.publishView(runId);
-    } catch (error) {
-      console.warn("Swarm view refresh failed; durable task state was preserved.",
-        error instanceof Error ? error.message.slice(0, 512) : "Runtime UI unavailable");
-    }
+    void this.publishView(runId).catch((error) => {
+      console.warn(
+        "Swarm view refresh failed; durable task state was preserved.",
+        error instanceof Error ? error.message.slice(0, 512) : "Runtime UI unavailable",
+      );
+    });
   }
   private async publishView(runId: string): Promise<void> {
     const invocation = this.viewInvocations.get(runId);
@@ -1330,15 +1406,13 @@ export class SwarmExecutor {
       await this.requireRun(runId),
       invocation,
       (request, context) => this.factory.execute(request, context),
+      { openIfMissing: false },
     );
   }
   private async stopped(runId: string): Promise<boolean> {
     return (await this.requireRun(runId)).state !== "running";
   }
-  private appendWhileRunning(
-    runId: string,
-    events: readonly SwarmRunUpdateEvent[],
-  ): Promise<void> {
+  private appendWhileRunning(runId: string, events: readonly SwarmRunUpdateEvent[]): Promise<void> {
     return this.withStateTransition(async () => {
       if ((await this.requireRun(runId)).state !== "running") return;
       await this.append(runId, events);
@@ -1354,18 +1428,17 @@ export class SwarmExecutor {
       if (TERMINAL_RUN_STATES.has(run.state)) {
         return run;
       }
-      if (run.state !== "paused") await this.append(runId, [
-        {
-          type: "run.paused",
-          reason,
-        },
-      ]);
+      if (run.state !== "paused")
+        await this.append(runId, [
+          {
+            type: "run.paused",
+            reason,
+          },
+        ]);
       const paused = await this.requireRun(runId);
       const delegationIds = new Set(
         paused.tasks.flatMap((task) =>
-          task.state === "running" && task.delegationId !== undefined
-            ? [task.delegationId]
-            : [],
+          task.state === "running" && task.delegationId !== undefined ? [task.delegationId] : [],
         ),
       );
       await Promise.all(
@@ -1394,11 +1467,7 @@ export class SwarmExecutor {
     reason: string,
     invocation: InvocationContext,
   ): Promise<RuntimeExecResponse> {
-    return this.delegationCall(
-      "runtime.delegation.pause",
-      { delegationId, reason },
-      invocation,
-    );
+    return this.delegationCall("runtime.delegation.pause", { delegationId, reason }, invocation);
   }
   private cancelAgent(
     delegationId: string,
@@ -1476,9 +1545,7 @@ function executableSwarmTasks(run: SwarmRun): readonly ExecutableTask[] {
           role: child.role,
           ...(child.result === undefined ? {} : { result: child.result }),
           ...(child.error === undefined ? {} : { error: child.error }),
-          ...(child.changeRefs === undefined
-            ? {}
-            : { changeRefs: child.changeRefs }),
+          ...(child.changeRefs === undefined ? {} : { changeRefs: child.changeRefs }),
         })),
         outstanding: children
           .filter((child) => !isTerminalTask(child))
@@ -1500,10 +1567,7 @@ function childAttentionSignature(ready: ExecutableTask): string {
 function isTerminalTask(task: SwarmTask): boolean {
   return task.state === "completed" || task.state === "failed";
 }
-function permittedScopeNames(
-  run: SwarmRun,
-  task: SwarmTask,
-): readonly string[] {
+function permittedScopeNames(run: SwarmRun, task: SwarmTask): readonly string[] {
   const targets = declaredTargetScopes(run);
   return [...(targets ?? new Set([task.scope]))];
 }
@@ -1519,11 +1583,13 @@ function normalizeTargets(value: unknown): readonly SwarmRunTarget[] {
   if (!Array.isArray(value)) {
     throw new TypeError("targets must be an array.");
   }
-  return value.map((entry, index): SwarmRunTarget => ({
-    scope: requiredString(recordOf(entry)?.scope, `targets[${index}].scope`),
-    ref: requiredString(recordOf(entry)?.ref, `targets[${index}].ref`),
-    head: requiredString(recordOf(entry)?.head, `targets[${index}].head`),
-  }));
+  return value.map(
+    (entry, index): SwarmRunTarget => ({
+      scope: requiredString(recordOf(entry)?.scope, `targets[${index}].scope`),
+      ref: requiredString(recordOf(entry)?.ref, `targets[${index}].ref`),
+      head: requiredString(recordOf(entry)?.head, `targets[${index}].head`),
+    }),
+  );
 }
 function assertResumableScopes(run: SwarmRun): void {
   const scopes = declaredTargetScopes(run);
@@ -1563,13 +1629,8 @@ function promptFor(
     throw new TypeError("Field Guide content must be a string.");
   }
   const nodePosition = task.parentTaskId === undefined ? "root" : "descendant";
-  const turnPhase =
-    childOutcomes.length === 0
-      ? "initial"
-      : "resumed with direct child outcomes";
-  const scopeTarget = swarmRunTargets(run).find(
-    (target) => target.scope === task.scope,
-  );
+  const turnPhase = childOutcomes.length === 0 ? "initial" : "resumed with direct child outcomes";
+  const scopeTarget = swarmRunTargets(run).find((target) => target.scope === task.scope);
   const targetRef = scopeTarget?.ref ?? run.targetRef ?? "not recorded";
   const targetHead = scopeTarget?.head ?? run.targetHead ?? "not recorded";
   return [
@@ -1626,13 +1687,13 @@ function promptFor(
     "",
     "## Response interface",
     "",
-    "Use the TypeScript runtime capabilities swarm.nodes.list/get/launch/publishArtifact/block/fail/complete/resume for all task lifecycle changes.",
-    "These are broker capability names, not an ambient swarm object or separate native tools. Invoke them through runtimeInvoke({capability: \"swarm.nodes.<operation>\", input: {...}}). For runtimeExecuteTypeScript, use: export default async (input, context) => context.runtime.invoke(\"swarm.nodes.<operation>\", input); Pass the capability arguments as the tool input. The second function argument is a context containing runtime; invoke takes the capability name and input as two positional arguments and returns the capability output directly.",
-    "For discovery, use runtimeSearch({name: \"swarm.nodes.<operation>\"}) with the exact capability name. A failure in unrelated catalog search does not imply this capability is unavailable; direct invocation remains the supported path for known capabilities.",
+    "Use the TypeScript runtime capabilities swarm.nodes.list/get/launch/publishArtifact/block/fail/complete/continue/resume for all task lifecycle changes.",
+    'These are broker capability names, not an ambient swarm object or separate native tools. Invoke them through runtimeInvoke({capability: "swarm.nodes.<operation>", input: {...}}). For runtimeExecuteTypeScript, use: export default async (input, context) => context.runtime.invoke("swarm.nodes.<operation>", input); Pass the capability arguments as the tool input. The second function argument is a context containing runtime; invoke takes the capability name and input as two positional arguments and returns the capability output directly.',
+    'For discovery, use runtimeSearch({name: "swarm.nodes.<operation>"}) with the exact capability name. A failure in unrelated catalog search does not imply this capability is unavailable; direct invocation remains the supported path for known capabilities.',
     `Your durable identity is runId=${run.runId}, taskId=${task.taskId}.`,
     "Launch input: {runId,parentTaskId,taskId,role,objective,scope,dependencyTaskIds?,idempotencyKey}. taskId is parent-local. Only planners may launch children; child scope must be a declared repository.",
     "Before completing, publish an artifact reference through swarm.nodes.publishArtifact with {runId,taskId,artifact:{uri,kind,summary}}. Required artifact kinds: planner uses plan, decision, or report; reviewer uses review; reconciler uses reconciliation. Write a readable decision/action/rationale summary to that file; never publish hidden chain-of-thought. An inline artifact passed to swarm.nodes.complete does not publish a reference.",
-    "Complete explicitly with {runId,taskId,commits?:string[]}; code output is a simple commits list. Block or fail with {runId,taskId,reason}. Blocked work resumes only after explicit resume with a resolution reason.",
+    "Complete explicitly with {runId,taskId,commits?:string[]}; code output is a simple commits list. If the task needs another conversation turn, request it before ending the current turn with swarm.nodes.continue {runId,taskId,reason}; this may be repeated without a fixed turn limit. Block or fail with {runId,taskId,reason}. Blocked work resumes only after explicit resume with a resolution reason.",
     "Your final conversational response does not launch children or complete this task. Pending children start once dependencies complete. Inspect sibling ownership and publish shared decisions before dependent work.",
   ].join("\n");
 }
@@ -1641,9 +1702,7 @@ function siblingRosterSection(task: SwarmTask, run: SwarmRun): string[] {
   if (parentTaskId === undefined) return [];
   const siblings = run.tasks.filter(
     (entry) =>
-      entry.parentTaskId === parentTaskId &&
-      entry.taskId !== task.taskId &&
-      !isTerminalTask(entry),
+      entry.parentTaskId === parentTaskId && entry.taskId !== task.taskId && !isTerminalTask(entry),
   );
   if (siblings.length === 0) return [];
   const roster = siblings.map((sibling) => ({
@@ -1663,9 +1722,7 @@ function siblingRosterSection(task: SwarmTask, run: SwarmRun): string[] {
     "",
   ];
 }
-function outstandingSection(
-  outstanding: readonly OutstandingChild[],
-): string[] {
+function outstandingSection(outstanding: readonly OutstandingChild[]): string[] {
   if (outstanding.length === 0) return [];
   return [
     "## Outstanding children",
@@ -1758,13 +1815,10 @@ function executionReceipt(
   value: Readonly<Record<string, unknown>>,
 ): SwarmRunUpdateEvent | undefined {
   const receiptId = stringValue(value.executionId);
-  const matched = receiptId
-    ? task.executions.find((e) => e.executionId === receiptId)
-    : undefined;
+  const matched = receiptId ? task.executions.find((e) => e.executionId === receiptId) : undefined;
   if (task.state === "completed" && receiptId && !matched) return undefined;
   const previous =
-    matched ??
-    task.executions.filter((e) => e.delegationId === task.delegationId).at(-1);
+    matched ?? task.executions.filter((e) => e.delegationId === task.delegationId).at(-1);
   if (!previous) return undefined;
   const usage = recordOf(value.usage);
   return {
@@ -1796,9 +1850,7 @@ function executionReceipt(
               const measured = recordOf(entry?.usage);
               if (!measured) throw new Error("Invalid model usage receipt.");
               return {
-                ...(stringValue(entry?.model)
-                  ? { model: stringValue(entry?.model) }
-                  : {}),
+                ...(stringValue(entry?.model) ? { model: stringValue(entry?.model) } : {}),
                 usage: {
                   ...(typeof measured.inputTokens === "number"
                     ? { inputTokens: measured.inputTokens }
@@ -1820,18 +1872,14 @@ function executionReceipt(
       ...(usage
         ? {
             usage: {
-              ...(typeof usage.inputTokens === "number"
-                ? { inputTokens: usage.inputTokens }
-                : {}),
+              ...(typeof usage.inputTokens === "number" ? { inputTokens: usage.inputTokens } : {}),
               ...(typeof usage.outputTokens === "number"
                 ? { outputTokens: usage.outputTokens }
                 : {}),
               ...(typeof usage.cachedInputTokens === "number"
                 ? { cachedInputTokens: usage.cachedInputTokens }
                 : {}),
-              ...(typeof usage.costUsd === "number"
-                ? { reportedCost: usage.costUsd }
-                : {}),
+              ...(typeof usage.costUsd === "number" ? { reportedCost: usage.costUsd } : {}),
             },
           }
         : {}),
@@ -1839,9 +1887,7 @@ function executionReceipt(
   };
 }
 
-function recordOf(
-  value: unknown,
-): Readonly<Record<string, unknown>> | undefined {
+function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Readonly<Record<string, unknown>>)
     : undefined;
@@ -1857,16 +1903,13 @@ function callerSessionId(invocation: InvocationContext): string {
   if (!sessionId) throw new TypeError("Swarm create requires a session scope.");
   return sessionId;
 }
-function optionalCallerSessionId(
-  invocation: InvocationContext,
-): string | undefined {
+function optionalCallerSessionId(invocation: InvocationContext): string | undefined {
   const sessionId = invocation.scope?.sessionId?.trim();
   return sessionId || undefined;
 }
 function callerWorkspace(invocation: InvocationContext): string | undefined {
   const metadata = invocation.metadata;
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
-    return undefined;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
   const name = (
     metadata as {
       marshalWorkspaceName?: unknown;
@@ -1886,9 +1929,7 @@ function requiredRole(value: unknown, label: string): SwarmTaskRole {
     case "reviewer":
       return value;
     default:
-      throw new TypeError(
-        `${label} must be planner, worker, reconciler, or reviewer.`,
-      );
+      throw new TypeError(`${label} must be planner, worker, reconciler, or reviewer.`);
   }
 }
 function stringValue(value: unknown): string | undefined {
@@ -1899,9 +1940,7 @@ function optionalChangeRefs(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) {
     throw new TypeError("Delegation changeRefs must be an array.");
   }
-  return value.map((entry, index) =>
-    requiredString(entry, `Delegation changeRefs[${index}]`),
-  );
+  return value.map((entry, index) => requiredString(entry, `Delegation changeRefs[${index}]`));
 }
 function plainError(value: unknown): string {
   if (value instanceof Error) return value.message;
@@ -1916,8 +1955,7 @@ function errorText(value: unknown, fallback: string): string {
 function completionRejectedForLiveDescendant(value: unknown): boolean {
   const error = errorText(value, "");
   return (
-    error === DESCENDANT_INTEGRATION_REJECTION ||
-    error === ROOT_COMPLETION_RECONCILIATION_REJECTION
+    error === DESCENDANT_INTEGRATION_REJECTION || error === ROOT_COMPLETION_RECONCILIATION_REJECTION
   );
 }
 function environmentalWorktreePauseReason(
@@ -1944,19 +1982,10 @@ function environmentalWorktreePauseReason(
     ...(category === undefined ? {} : { category }),
   };
 }
-function pauseReasonForError(
-  value: unknown,
-  taskId: string,
-): SwarmPauseReason | undefined {
-  return (
-    diskFullPauseReason(value, taskId) ??
-    environmentalWorktreePauseReason(value, taskId)
-  );
+function pauseReasonForError(value: unknown, taskId: string): SwarmPauseReason | undefined {
+  return diskFullPauseReason(value, taskId) ?? environmentalWorktreePauseReason(value, taskId);
 }
-function diskFullPauseReason(
-  value: unknown,
-  taskId: string,
-): SwarmPauseReason | undefined {
+function diskFullPauseReason(value: unknown, taskId: string): SwarmPauseReason | undefined {
   if (!isDiskFullError(value)) return undefined;
   const error = recordOf(value);
   const message = errorText(
@@ -1970,9 +1999,7 @@ function diskFullPauseReason(
     taskId,
     attempts: 3,
     message,
-    ...(code === undefined
-      ? {}
-      : { code: typeof code === "string" ? code : String(code) }),
+    ...(code === undefined ? {} : { code: typeof code === "string" ? code : String(code) }),
     category: "disk-full",
   } as SwarmPauseReason;
 }
@@ -1991,20 +2018,12 @@ function isDiskFullError(
     return contextual && /^(?:error\s*)?112$/i.test(value.trim());
   }
   if (typeof value === "number") {
-    return (
-      value === 28 ||
-      value === -28 ||
-      value === 39 ||
-      (value === 112 && contextual)
-    );
+    return value === 28 || value === -28 || value === 39 || (value === 112 && contextual);
   }
   if (value === null || typeof value !== "object") return false;
   if (seen.has(value)) return false;
   seen.add(value);
-  if (
-    value instanceof Error &&
-    isDiskFullError(value.message, seen, contextual)
-  ) {
+  if (value instanceof Error && isDiskFullError(value.message, seen, contextual)) {
     return true;
   }
   const record = recordOf(value);

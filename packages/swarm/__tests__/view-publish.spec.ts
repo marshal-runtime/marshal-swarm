@@ -89,6 +89,20 @@ describe("publishSwarmRunView", () => {
         ),
       ).toBe(true);
     });
+
+    it("does not reopen closed surfaces during a background refresh", async () => {
+      const calls: string[] = [];
+      await publishSwarmRunView(
+        RUN,
+        scopedInvocation(),
+        async (request) => {
+          calls.push(request.target);
+          return success({ instances: [] });
+        },
+        { openIfMissing: false },
+      );
+      expect(calls).toEqual([UI_APPLICATION_LIST, UI_APPLICATION_LIST]);
+    });
   });
 
   describe("Error Handling", () => {

@@ -32,7 +32,7 @@ export async function publishSwarmRunView(
   run: SwarmRun,
   invocation: InvocationContext,
   execute: SwarmViewExecute,
-  options?: { readonly focus?: boolean },
+  options?: { readonly focus?: boolean; readonly openIfMissing?: boolean },
 ): Promise<void> {
   if (!viewScope(invocation)) return;
   const key = JSON.stringify([invocation.scope?.sessionId, invocation.metadata?.[WORKSPACE_METADATA_KEY], run.runId]);
@@ -40,7 +40,15 @@ export async function publishSwarmRunView(
   const next = previous.catch(() => undefined).then(async () => {
     const state = { run: projectSwarmRunView(run) };
     const surfaces = [UI_SURFACE_PANEL, UI_SURFACE_INLINE_CARD] as const;
-    await Promise.all(surfaces.map(surface => upsertSurface(run.runId, surface, state, invocation, execute, options?.focus === true)));
+    await Promise.all(surfaces.map(surface => upsertSurface(
+      run.runId,
+      surface,
+      state,
+      invocation,
+      execute,
+      options?.focus === true,
+      options?.openIfMissing !== false,
+    )));
   });
   pendingPublishes.set(key, next);
   try { await next; } finally { if (pendingPublishes.get(key) === next) pendingPublishes.delete(key); }
@@ -59,6 +67,7 @@ async function upsertSurface(
   invocation: InvocationContext,
   execute: SwarmViewExecute,
   focus: boolean,
+  openIfMissing: boolean,
 ): Promise<void> {
   const listed = await uiCall(execute, invocation, UI_APPLICATION_LIST, {
     extensionId: SWARM_EXTENSION_IDENTITY,
@@ -83,6 +92,7 @@ async function upsertSurface(
       });
     return;
   }
+  if (!openIfMissing) return;
   await uiCall(execute, invocation, UI_APPLICATION_OPEN, {
     extensionId: SWARM_EXTENSION_IDENTITY,
     applicationId: SWARM_RUN_APPLICATION_ID,

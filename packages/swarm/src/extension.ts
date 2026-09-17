@@ -20,6 +20,7 @@ import {
   swarmRunApplication,
   swarmSlashApplication,
   SWARM_RUN_APPLICATION_ID,
+  SWARM_RUN_NAVIGATION_PLACEMENT_ID,
   SWARM_RUN_VIEW_RENDER_ID,
   SWARM_RUN_VIEW_RESOURCE_URI,
   SWARM_SLASH_COMMAND_APPLICATION_ID,
@@ -69,6 +70,7 @@ const extension: RuntimeExtensionModule = {
         text: "<main data-marshal-swarm-run></main>",
       },
       application: swarmRunApplication(),
+      metadata: { "marshal.ui.viewports": ["mobile", "desktop"] },
       tags: ["swarm"],
     };
     const slash: RuntimeExtensionUiApplication = {
@@ -80,15 +82,21 @@ const extension: RuntimeExtensionModule = {
       resource: {
         uri: SWARM_SLASH_COMMAND_RESOURCE_URI,
         mimeType: "text/plain",
-        text: "",
+        text: "Start a swarm from the current conversation.",
       },
       application: swarmSlashApplication(),
+      metadata: { "marshal.ui.viewports": ["mobile", "desktop"] },
       tags: ["swarm", "slash-command"],
     };
     return {
       capabilityProviders: [provider],
       uiApplications: [ui, slash],
       uiPlacements: [
+        {
+          placementId: SWARM_RUN_NAVIGATION_PLACEMENT_ID,
+          applicationId: SWARM_RUN_APPLICATION_ID,
+          action: "augment",
+        },
         {
           placementId: SWARM_SLASH_COMMAND_PLACEMENT_ID,
           action: "augment",

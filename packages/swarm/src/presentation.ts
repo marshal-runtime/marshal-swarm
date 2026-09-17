@@ -6,6 +6,7 @@ export const SWARM_RUN_VIEW_RENDER_ID = "swarm.run.view";
 export const SWARM_RUN_VIEW_RESOURCE_URI = "ui://marshal/swarm/run";
 export const SWARM_RUN_APPLICATION_ID = "swarm-run";
 export const SWARM_SLASH_COMMAND_NAME = "swarm";
+export const SWARM_RUN_NAVIGATION_PLACEMENT_ID = "nav.primary";
 export const SWARM_SLASH_COMMAND_PLACEMENT_ID = "marshal.chat.slash-command";
 export const SWARM_SLASH_COMMAND_APPLICATION_ID = SWARM_SLASH_COMMAND_NAME;
 export const SWARM_SLASH_COMMAND_RESOURCE_URI = "ui://marshal/swarm/slash-command";

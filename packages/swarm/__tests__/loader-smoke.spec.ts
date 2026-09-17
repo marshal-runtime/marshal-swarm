@@ -8,7 +8,12 @@ import {
   computeRuntimeExtensionIntegrity,
   LocalRuntimeExtensionPackageLoader,
 } from '@marshal/runtime/extensions';
-import { SWARM_RUN_VIEW_RESOURCE_URI, SWARM_SLASH_COMMAND_RESOURCE_URI } from '../src/presentation.js';
+import {
+  SWARM_RUN_APPLICATION_ID,
+  SWARM_RUN_NAVIGATION_PLACEMENT_ID,
+  SWARM_RUN_VIEW_RESOURCE_URI,
+  SWARM_SLASH_COMMAND_RESOURCE_URI,
+} from '../src/presentation.js';
 
 describe('packed Runtime extension', () => {
   it('loads and disposes without Swarm services or configuration', async () => {
@@ -44,6 +49,19 @@ describe('packed Runtime extension', () => {
       SWARM_RUN_VIEW_RESOURCE_URI,
       SWARM_SLASH_COMMAND_RESOURCE_URI,
     ]);
+    expect(activation.uiApplications?.every((application) => application.resource.text)).toBe(true);
+    expect(
+      activation.uiApplications?.every(
+        (application) =>
+          JSON.stringify(application.metadata?.['marshal.ui.viewports']) ===
+          JSON.stringify(['mobile', 'desktop']),
+      ),
+    ).toBe(true);
+    expect(activation.uiPlacements).toContainEqual({
+      placementId: SWARM_RUN_NAVIGATION_PLACEMENT_ID,
+      applicationId: SWARM_RUN_APPLICATION_ID,
+      action: 'augment',
+    });
     await activation.dispose?.();
     } finally {
       rmSync(root, { recursive: true, force: true });
