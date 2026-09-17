@@ -18,6 +18,7 @@ import {
   type SwarmTaskRole,
   type SwarmRoleModels,
   type SwarmArtifactReference,
+  type SwarmNodeAck,
 } from "./contracts.js";
 import {
   getSwarmServiceContainer,
@@ -65,7 +66,6 @@ interface OutstandingChild {
   readonly taskId: string;
   readonly role: SwarmTaskRole;
   readonly scope: string;
-  readonly objective: string;
 }
 interface ChildDelegation {
   readonly definition: SwarmTaskDefinition;
@@ -433,9 +433,16 @@ export class SwarmExecutor {
           ]);
         } else await this.append(runId, [event]);
       } else throw new Error(`Unknown node operation ${name}.`);
-      return (await this.requireRun(runId)).tasks.find(
+      const finalTask = (await this.requireRun(runId)).tasks.find(
         (t) => t.taskId === taskId,
       );
+      if (name === "resume" || name === "block")
+        return {
+          taskId: finalTask!.taskId,
+          state: finalTask!.state,
+          resumeCount: finalTask!.resumeCount ?? 0,
+        } satisfies SwarmNodeAck;
+      return finalTask;
     });
     await this.finishRun(runId);
     if (
@@ -1488,7 +1495,6 @@ function executableSwarmTasks(run: SwarmRun): readonly ExecutableTask[] {
             taskId: parentLocalTaskId(task.taskId, child.taskId),
             role: child.role,
             scope: child.scope,
-            objective: child.objective,
           })),
       },
     ];
@@ -1633,6 +1639,7 @@ function promptFor(
     "Launch input: {runId,parentTaskId,taskId,role,objective,scope,dependencyTaskIds?,idempotencyKey}. taskId is parent-local. Only planners may launch children; child scope must be a declared repository.",
     "Before completing, publish an artifact reference through swarm.nodes.publishArtifact with {runId,taskId,artifact:{uri,kind,summary}}. Required artifact kinds: planner uses plan, decision, or report; reviewer uses review; reconciler uses reconciliation. Write a readable decision/action/rationale summary to that file; never publish hidden chain-of-thought. An inline artifact passed to swarm.nodes.complete does not publish a reference.",
     "Complete explicitly with {runId,taskId,commits?:string[]}; code output is a simple commits list. Block or fail with {runId,taskId,reason}. Blocked work resumes only after explicit resume with a resolution reason.",
+    "Do not call swarm.nodes.continue to wait for children: the runtime automatically wakes this node when a direct child completes, fails, or blocks. continue is only for taking another turn of your own work now, never for polling or waiting.",
     "Your final conversational response does not launch children or complete this task. Pending children start once dependencies complete. Inspect sibling ownership and publish shared decisions before dependent work.",
   ].join("\n");
 }
@@ -1651,14 +1658,16 @@ function siblingRosterSection(task: SwarmTask, run: SwarmRun): string[] {
     role: sibling.role,
     scope: sibling.scope,
     state: sibling.state,
-    objective: sibling.objective,
+    ...(sibling.reason === undefined ? {} : { reason: sibling.reason }),
   }));
   return [
     "## Sibling ownership",
     "",
     "These tasks share your parent. Do not decide or redefine a shared " +
       "interface or exported symbol another sibling owns; defer any shared " +
-      "contract to your nearest common planner.",
+      "contract to your nearest common planner. Each entry is compact " +
+      "(taskId, role, scope, state); fetch a sibling's full objective via " +
+      "swarm.nodes.get({runId,taskId}) if you need it.",
     JSON.stringify(roster),
     "",
   ];
@@ -1672,7 +1681,9 @@ function outstandingSection(
     "",
     "These direct children are still live. You may react to the outcomes above " +
       "and delegate more work, but you may not complete while any child remains " +
-      "outstanding. Blocked children need your decision or resolution; inspect their reason and use swarm.nodes.resume only once it is resolved.",
+      "outstanding. Blocked children need your decision or resolution; inspect their reason and use swarm.nodes.resume only once it is resolved. " +
+      "Each entry is compact (taskId, role, scope, state, reason); fetch a " +
+      "child's full objective via swarm.nodes.get({runId,taskId}) if you need it.",
     JSON.stringify(outstanding),
     "",
   ];

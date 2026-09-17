@@ -169,6 +169,17 @@ const IDENTIFIER = {
 } as const;
 const RUN_INPUT = objectSchema({ runId: IDENTIFIER }, ["runId"]);
 const RUN_OUTPUT = objectSchema({ run: { type: "object" } }, ["run"]);
+const NODE_ACK_SCHEMA = objectSchema(
+  {
+    taskId: IDENTIFIER,
+    state: {
+      type: "string",
+      enum: ["pending", "running", "blocked", "completed", "failed"],
+    },
+    resumeCount: { type: "integer", minimum: 0 },
+  },
+  ["taskId", "state", "resumeCount"],
+);
 const ROLE_MODELS = {
   type: "object", minProperties: 1, additionalProperties: false,
   properties: Object.fromEntries(["planner", "worker", "reconciler", "reviewer"].map((role) => [role,
@@ -216,7 +227,9 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
           node:
             name === "list"
               ? { type: "array", items: { type: "object" } }
-              : { type: "object" },
+              : name === "block" || name === "resume"
+                ? NODE_ACK_SCHEMA
+                : { type: "object" },
         },
         ["node"],
       ),
