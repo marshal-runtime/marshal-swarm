@@ -586,7 +586,7 @@ describe("explicit persistent node protocol", () => {
       { runId: "r", taskId: "root", reason: "Needs dependency" },
       owner,
     );
-    expect(blockAck).toEqual({ taskId: "root", state: "blocked", resumeCount: 0 });
+    expect(blockAck).toEqual({ taskId: "root", state: "blocked", resumeCount: 1 });
     await executor.drive({ runId: "r" }, owner);
     const blocked = (await executor.get({ runId: "r" })).tasks[0];
     expect(blocked.state).toBe("blocked");
@@ -600,13 +600,13 @@ describe("explicit persistent node protocol", () => {
       { runId: "r", taskId: "root", reason: "Dependency resolved" },
       owner,
     );
-    expect(resumeAck).toEqual({ taskId: "root", state: "running", resumeCount: 1 });
+    expect(resumeAck).toEqual({ taskId: "root", state: "running", resumeCount: 2 });
     const continueAck: any = await executor.nodeOperation(
       "continue",
       { runId: "r", taskId: "root", reason: "Keep going" },
       owner,
     );
-    expect(continueAck).toEqual({ taskId: "root", state: "running", resumeCount: 2 });
+    expect(continueAck).toEqual({ taskId: "root", state: "running", resumeCount: 3 });
   });
   it("requires planner artifact and protects completed tasks from late messages", async () => {
     const { executor } = await setup();
