@@ -1,6 +1,6 @@
 import { readSwarmEvidenceFile } from "./read-evidence-file.js";
 import { createHash } from "node:crypto";
-import { type InvocationContext } from "@marshal/runtime";
+import type { InvocationContext } from "@marshal/runtime";
 import {
   replaySwarmRun,
   SWARM_OWNER_SESSION_BUSY_ERROR,
@@ -16,13 +16,13 @@ import {
 import { tryGetSwarmTranscriptReaderService } from "./services.js";
 import { createSwarmRunId } from "./run-id.js";
 import { publishSwarmRunView } from "./view-publish.js";
-import {
-  type SwarmRunCancelInput,
-  type SwarmRunCreateInput,
-  type SwarmRunInput,
-  type SwarmRunPauseInput,
-  type SwarmRunRecoverSystemFailureInput,
-  type SwarmRunSetRoleModelsInput,
+import type {
+  SwarmRunCancelInput,
+  SwarmRunCreateInput,
+  SwarmRunInput,
+  SwarmRunPauseInput,
+  SwarmRunRecoverSystemFailureInput,
+  SwarmRunSetRoleModelsInput,
 } from "./types.js";
 import {
   TERMINAL_RUN_STATES,
