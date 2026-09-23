@@ -107,6 +107,15 @@ root owner; task lifecycle writes retain their owning-task authorization.
 Completion requires an explicit `swarm.nodes.complete` call, after any required
 artifact publication; conversational output does not complete a task.
 
+A failed or cancelled task leaves no live work beneath it: the executor appends
+`task.cancelled` for every pending, running, or blocked descendant in the same
+write and cancels their running delegations. The one exception is the root's
+owner-session transport failure (busy/superseded), whose children are kept for
+`swarm.runs.recoverSystemFailure`. The journal refuses `task.dispatched` and
+`task.started` under a failed or completed parent, and refuses `run.resumed`
+after `run.failed`/`run.cancelled`; a failed run re-enters only through audited
+recovery, which leaves it paused.
+
 ## Local development
 
 From the canonical repository root
