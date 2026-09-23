@@ -304,7 +304,8 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         pauseReason = event.reason;
         break;
       case "run.resumed":
-        if (state === "completed")
+        // Failed/cancelled runs re-enter only via run.systemFailureRecovered (-> paused).
+        if (state === "completed" || (!legacy && state === "failed"))
           throw eventError(offset + 1, "run.resumed may not follow a terminal run state.");
         state = "running";
         pauseReason = undefined;
@@ -433,6 +434,8 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
           throw eventError(offset + 1, "Only pending tasks can start.");
         if ((task.dependencyTaskIds ?? []).some((id) => tasks.get(id)?.state !== "completed"))
           throw eventError(offset + 1, "Dependencies must be completed.");
+        if (!legacy && !hasLiveParent(tasks, task))
+          throw eventError(offset + 1, "Parent task is no longer live.");
         tasks.set(event.taskId, {
           ...task,
           state: "running",
@@ -552,6 +555,8 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
           (task.dependencyTaskIds ?? []).some((id) => tasks.get(id)?.state !== "completed")
         )
           throw eventError(offset + 1, "Task is not ready for dispatch.");
+        if (!legacy && !hasLiveParent(tasks, task))
+          throw eventError(offset + 1, "Parent task is no longer live.");
         tasks.set(task.taskId, {
           ...task,
           state: "running",
@@ -824,6 +829,11 @@ export function validateSwarmRoleModels(value: unknown): asserts value is SwarmR
     assertNonEmptyString(selection.model, `roleModels.${role}.model`);
     optionalText(selection, "reasoningEffort", `roleModels.${role}`);
   }
+}
+function hasLiveParent(tasks: ReadonlyMap<string, SwarmTask>, task: SwarmTask): boolean {
+  if (task.parentTaskId === undefined) return true;
+  const parent = tasks.get(task.parentTaskId);
+  return parent !== undefined && parent.state !== "completed" && parent.state !== "failed";
 }
 function assertNotTerminal(state: SwarmRunState, index: number, type: string): void {
   if (state === "completed" || state === "failed")

@@ -11,6 +11,7 @@ import {
   type SwarmJsonValue,
   type SwarmPauseReason,
   type SwarmRun,
+  type SwarmRunEvent,
   type SwarmRunTarget,
   type SwarmRunUpdateEvent,
   type SwarmTask,
@@ -20,6 +21,11 @@ import {
   type SwarmArtifactReference,
   type SwarmNodeAck,
 } from "./contracts.js";
+import {
+  parentIsLive,
+  rootFailureCancellations,
+  withFailureCascade,
+} from "./failure-cascade.js";
 import { getSwarmServiceContainer, type SwarmServiceContainer } from "./service-container.js";
 import {
   tryGetSwarmSharedContextService,
@@ -1303,12 +1309,23 @@ export class SwarmExecutor {
         return;
       }
       if (root.state === "failed") {
+        const events = await this.options.eventStore.read(runId);
+        const cancellations = rootFailureCancellations(
+          run,
+          events.at(-1) as SwarmRunEvent | undefined,
+          root.error,
+        );
         await this.append(runId, [
+          ...cancellations.events,
           {
             type: "run.failed",
             error: root.error ?? "Root task failed.",
           },
         ]);
+        const invocation = this.viewInvocations.get(runId);
+        if (invocation)
+          for (const delegationId of cancellations.cancelledDelegationIds)
+            void this.cancelAgent(delegationId, invocation).catch(() => undefined);
         return;
       }
       if (root.state !== "completed") return;
@@ -1396,9 +1413,14 @@ export class SwarmExecutor {
     return run;
   }
   private async append(runId: string, events: readonly SwarmRunUpdateEvent[]): Promise<void> {
-    for (const event of events) {
+    const cascaded = withFailureCascade(await this.requireRun(runId), events);
+    for (const event of cascaded.events) {
       await this.options.eventStore.append(runId, event);
     }
+    const invocation = this.viewInvocations.get(runId);
+    if (invocation)
+      for (const delegationId of cascaded.cancelledDelegationIds)
+        void this.cancelAgent(delegationId, invocation).catch(() => undefined);
     void this.publishView(runId).catch((error) => {
       console.warn(
         "Swarm view refresh failed; durable task state was preserved.",
@@ -1527,6 +1549,7 @@ function executableSwarmTasks(run: SwarmRun): readonly ExecutableTask[] {
   return run.tasks.flatMap((task): ExecutableTask[] => {
     const children = childrenByParent.get(task.taskId) ?? [];
     if (task.state === "pending") {
+      if (!parentIsLive(run, task)) return [];
       return (task.dependencyTaskIds ?? []).every(
         (id) => run.tasks.find((t) => t.taskId === id)?.state === "completed",
       )
