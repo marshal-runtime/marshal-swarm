@@ -1,4 +1,4 @@
-import { type SwarmJsonValue, type SwarmRoleModels, type SwarmRunEvent } from "./contract-types.js";
+import type { SwarmJsonValue, SwarmRoleModels, SwarmRunEvent } from "./contract-types.js";
 import { assertSwarmRunId } from "./contracts.js";
 export class SwarmValidationError extends Error {
   constructor(message: string) {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type InvocationContext } from "@marshal/runtime";
+import type { InvocationContext } from "@marshal/runtime";
 import {
   swarmRunTargets,
   type SwarmJsonValue,

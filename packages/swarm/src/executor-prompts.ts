@@ -1,5 +1,5 @@
 import { swarmRunTargets, type SwarmRun, type SwarmTask, type SwarmTaskRole } from "./contracts.js";
-import { type SwarmBaseline, type SwarmSharedContext } from "./services.js";
+import type { SwarmBaseline, SwarmSharedContext } from "./services.js";
 import {
   type ExecutableTask,
   type OutstandingChild,

@@ -1,6 +1,6 @@
-import { type InvocationContext } from "@marshal/runtime";
-import { type SwarmRun } from "./contracts.js";
-import { type SwarmRunInput } from "./types.js";
+import type { InvocationContext } from "@marshal/runtime";
+import type { SwarmRun } from "./contracts.js";
+import type { SwarmRunInput } from "./types.js";
 import {
   TERMINAL_RUN_STATES,
   type ExecutableTask,

@@ -1,4 +1,4 @@
-import { type InvocationContext, type RuntimeExecResponse } from "@marshal/runtime";
+import type { InvocationContext, RuntimeExecResponse } from "@marshal/runtime";
 import {
   replaySwarmRun,
   SWARM_OWNER_SESSION_BUSY_ERROR,
@@ -14,11 +14,7 @@ import { getSwarmServiceContainer, type SwarmServiceContainer } from "./service-
 import { tryGetSwarmRoleModelService } from "./services.js";
 import { parseSwarmRunOwnerSessionId } from "./run-id.js";
 import { publishSwarmRunView } from "./view-publish.js";
-import {
-  type SwarmRunCreateInput,
-  type SwarmSourceOptions,
-  type SwarmExecutionContext,
-} from "./types.js";
+import type { SwarmRunCreateInput, SwarmSourceOptions, SwarmExecutionContext } from "./types.js";
 import {
   RUNTIME_PROTOCOL_VERSION,
   DEFAULT_WORKER_MODEL,

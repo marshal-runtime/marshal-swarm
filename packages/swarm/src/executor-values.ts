@@ -1,5 +1,5 @@
-import { type InvocationContext } from "@marshal/runtime";
-import { type SwarmPauseReason, type SwarmTaskRole } from "./contracts.js";
+import type { InvocationContext } from "@marshal/runtime";
+import type { SwarmPauseReason, SwarmTaskRole } from "./contracts.js";
 export const RUNTIME_PROTOCOL_VERSION = "1.0.0";
 export const REVIEWER_CONTRACT_MESSAGE =
   'Reviewer results must be structured as {"reviewed":true,"findings":[...]}. ' +
