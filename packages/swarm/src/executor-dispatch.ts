@@ -2,10 +2,17 @@ import { createHash } from "node:crypto";
 import type { InvocationContext } from "@marshal/runtime";
 import {
   replaySwarmRun,
+  type SwarmJsonValue,
   type SwarmRun,
   type SwarmRunUpdateEvent,
   type SwarmTask,
 } from "./contracts.js";
+import {
+  completionProblems,
+  taskRoleDefinition,
+  taskRoleLabel,
+  withIntegrationWarning,
+} from "./role-definitions.js";
 import {
   tryGetSwarmSharedContextService,
   tryGetSwarmBaselineService,
@@ -220,7 +227,15 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       task.parentTaskId === undefined
         ? undefined
         : run.tasks.find((entry) => entry.taskId === task.parentTaskId)?.delegationId;
-    const configuredRoleModel = this.resolveRoleModel(task.role, run, run);
+    const definition = taskRoleDefinition(run, task);
+    const configuredRoleModel = definition
+      ? {
+          model: definition.model,
+          ...(definition.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: definition.reasoningEffort }),
+        }
+      : this.resolveRoleModel(task.role, run, run);
     const callerSession = optionalCallerSessionId(invocation);
     const reserved =
       task.executions.at(-1)?.dispatchState === "registered" ? task.executions.at(-1) : undefined;
@@ -232,7 +247,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
     ) {
       return {
         ready,
-        error: `Reserved dispatch "${reserved.executionId}" conflicts with the current ${task.role} model policy; no dispatch was sent.`,
+        error: `Reserved dispatch "${reserved.executionId}" conflicts with the current ${taskRoleLabel(task)} model policy; no dispatch was sent.`,
       };
     }
     const roleModel = reserved?.launchInput
@@ -369,10 +384,14 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       if (task.state !== "running")
         throw new Error("Only running tasks may change state or publish artifacts.");
       const commits = optionalChangeRefs(input.commits) ?? [];
+      const problems = completionProblems(taskRoleDefinition(run, task), input.result, commits);
+      if (problems.length)
+        throw new Error(`Completion rejected; fix and complete again: ${problems.join(" ")}`);
       const event: SwarmRunUpdateEvent = {
         type: "task.completed",
         taskId,
         changeRefs: commits,
+        ...(input.result === undefined ? {} : { result: input.result as SwarmJsonValue }),
       };
       replaySwarmRun([...(await this.options.eventStore.read(runId)), event]);
       return { task, taskId, commits, event };
@@ -400,17 +419,15 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       if (run.state !== "running" || task.state !== "running")
         throw new Error("Task is no longer running.");
       const receipt = result ? executionReceipt(task, result) : undefined;
+      const completedResult = withIntegrationWarning(
+        prepared.event.type === "task.completed" ? prepared.event.result : undefined,
+        stringValue(recordOf(result?.result)?.integrationWarning),
+      );
       await this.append(runId, [
         ...(receipt ? [receipt] : []),
         {
           ...prepared.event,
-          ...(stringValue(recordOf(result?.result)?.integrationWarning)
-            ? {
-                result: {
-                  integrationWarning: stringValue(recordOf(result?.result)?.integrationWarning)!,
-                },
-              }
-            : {}),
+          ...(completedResult === undefined ? {} : { result: completedResult }),
           changeRefs:
             input.commits !== undefined
               ? prepared.commits

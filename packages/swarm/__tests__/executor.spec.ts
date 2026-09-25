@@ -663,6 +663,6 @@ describe("explicit persistent node protocol", () => {
       permissionBroker: createAllowAllPermissionBroker(),
     });
     kernel.register(createSwarmProvider(executor));
-    await expect(kernel.list(owner)).resolves.toHaveLength(21);
+    await expect(kernel.list(owner)).resolves.toHaveLength(22);
   });
 });

@@ -1,6 +1,6 @@
 import type { InvocationContext, RuntimeExecResponse } from '@marshal/runtime';
 import type { RuntimeOperationExecuteRequest } from '@marshal/runtime/core';
-import type { SwarmRunTarget, SwarmRoleModels } from './contracts.js';
+import type { SwarmRunTarget, SwarmRoleDefinition, SwarmRoleModels } from './contracts.js';
 import type { SwarmRunEventStore } from './store.js';
 import type { SwarmServiceContainer } from './service-container.js';
 
@@ -15,6 +15,7 @@ export interface SwarmRunCreateInput {
   readonly workerModel?: string;
   readonly workerReasoningEffort?: string;
   readonly roleModels?: SwarmRoleModels;
+  readonly roles?: readonly SwarmRoleDefinition[];
 }
 
 export interface SwarmRunInput {
@@ -27,6 +28,10 @@ export interface SwarmRunPauseInput {
 }
 export interface SwarmRunSetRoleModelsInput extends SwarmRunInput {
   readonly roleModels: SwarmRoleModels;
+  readonly reason: string;
+}
+export interface SwarmRunSetRolesInput extends SwarmRunInput {
+  readonly roles: readonly SwarmRoleDefinition[];
   readonly reason: string;
 }
 

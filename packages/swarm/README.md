@@ -53,6 +53,39 @@ Run-control operations include:
 | `swarm.runs.pause` | Durably pause scheduling and cooperatively signal persisted running delegations. |
 | `swarm.runs.resume` | Resume a paused run idempotently and drive it. |
 | `swarm.runs.drive` | Drive a running run; return a paused or terminal run unchanged. |
+| `swarm.runs.setRoles` | Add or replace run-defined roles for later prompts and launches. |
+
+## Run-defined roles
+
+The agent that creates a run can define extra roles in `swarm.runs.create`
+`roles`. Each definition has a `name`, a built-in `base` (`worker` or
+`reviewer`), a `model`, an optional `reasoningEffort`, `whenToUse`,
+`instructions`, optional `plannerGuidance`, and an optional `resultSchema`.
+
+- Planners see a "Run-defined roles" section and launch a defined role by
+  name in `swarm.nodes.launch` `role`. The task keeps the base role in `role`
+  and stores the defined name in `definedRole`.
+- The definition model and effort override the base role model for that task.
+- The task prompt adds the definition instructions to the base role contract.
+  Tools are the scripts that the instructions name; the package adds no tool
+  allowlist. A `reviewer` base stays read-only and inspects a named change ref
+  with `git checkout --detach <ref>` in its own worktree.
+- A defined role completes with `swarm.nodes.complete` `result`. The executor
+  validates the result against `resultSchema` before host finalization and
+  rejects an invalid result with the problems to fix. The result must stay
+  under 16,384 characters. Built-in roles cannot pass `result`.
+- The parent planner reads the result in its child outcomes and decides what
+  the result means. The package defines no verdict vocabulary.
+- `swarm.runs.setRoles` merges definitions by name for the root owner. It
+  replaces a same-name definition, appends a new one, and never removes one.
+  A definition cannot change its base. Updates apply to later prompts,
+  launches, dispatches, and completions.
+
+`resultSchema` supports this JSON Schema subset: `type`, `enum`, `const`,
+`properties`, `required`, `additionalProperties`, `items`, `minItems`,
+`maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `description`, and
+`title`. The executor rejects any other keyword when it creates or updates the
+role.
 
 Normal installation uses `runtime-extension.json` from this package directory
 through the generic `RuntimeExtensionManager`. The manager discovers, installs,

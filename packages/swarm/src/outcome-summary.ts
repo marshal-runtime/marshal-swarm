@@ -11,6 +11,7 @@ import type { SwarmRun, SwarmTask, SwarmTaskRole, SwarmTaskState } from "./contr
 export interface SwarmFailedTaskIdentity {
   readonly taskId: string;
   readonly role: SwarmTaskRole;
+  readonly definedRole?: string;
   readonly objective: string;
   readonly reason?: string;
 }
@@ -43,6 +44,7 @@ export function summarizeRunOutcome(run: SwarmRun): SwarmRunOutcomeSummary {
     failedTasks.push({
       taskId: task.taskId,
       role: task.role,
+      ...(task.definedRole === undefined ? {} : { definedRole: task.definedRole }),
       objective: firstLine(task.objective, OBJECTIVE_LIMIT),
       ...(failureReason(task) ? { reason: failureReason(task) } : {}),
     });

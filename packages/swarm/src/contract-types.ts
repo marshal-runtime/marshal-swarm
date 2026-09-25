@@ -8,6 +8,20 @@ export type SwarmJsonValue =
 export type SwarmTaskState = "pending" | "running" | "blocked" | "completed" | "failed";
 export type SwarmRunState = Exclude<SwarmTaskState, "pending"> | "paused";
 export type SwarmTaskRole = "planner" | "worker" | "reconciler" | "reviewer";
+export const SWARM_TASK_ROLES: readonly SwarmTaskRole[] = ["planner", "worker", "reconciler", "reviewer"];
+export type SwarmDefinedRoleBase = Extract<SwarmTaskRole, "worker" | "reviewer">;
+export const SWARM_DEFINED_ROLE_BASES: readonly SwarmDefinedRoleBase[] = ["worker", "reviewer"];
+/** A run-scoped role that the launching agent defines on top of a built-in base role. */
+export interface SwarmRoleDefinition {
+  readonly name: string;
+  readonly base: SwarmDefinedRoleBase;
+  readonly model: string;
+  readonly reasoningEffort?: string;
+  readonly whenToUse: string;
+  readonly instructions: string;
+  readonly plannerGuidance?: string;
+  readonly resultSchema?: SwarmJsonValue;
+}
 export type SwarmRoleModels = Readonly<
   Partial<
     Record<
@@ -40,6 +54,7 @@ export interface SwarmTaskDefinition {
   readonly taskId: string;
   readonly parentTaskId?: string;
   readonly role: SwarmTaskRole;
+  readonly definedRole?: string;
   readonly objective: string;
   readonly scope: string;
   readonly dependencyTaskIds?: readonly string[];
@@ -57,6 +72,7 @@ export interface SwarmRunCreateConfiguration {
   readonly workerModel?: string;
   readonly workerReasoningEffort?: string;
   readonly roleModels?: SwarmRoleModels;
+  readonly roles?: readonly SwarmRoleDefinition[];
 }
 export interface SwarmArtifactReference {
   readonly uri: string;
@@ -124,10 +140,18 @@ export type SwarmRunEvent =
       readonly workerModel?: string;
       readonly workerReasoningEffort?: string;
       readonly roleModels?: SwarmRoleModels;
+      readonly roles?: readonly SwarmRoleDefinition[];
     }
   | {
       readonly type: "run.roleModelsUpdated";
       readonly roleModels: SwarmRoleModels;
+      readonly reason: string;
+      readonly ownerSessionId: string;
+      readonly ownerPrincipalId: string;
+    }
+  | {
+      readonly type: "run.rolesUpdated";
+      readonly roles: readonly SwarmRoleDefinition[];
       readonly reason: string;
       readonly ownerSessionId: string;
       readonly ownerPrincipalId: string;
@@ -239,6 +263,7 @@ export interface SwarmRun {
   readonly workerModel?: string;
   readonly workerReasoningEffort?: string;
   readonly roleModels?: SwarmRoleModels;
+  readonly roles?: readonly SwarmRoleDefinition[];
   readonly state: SwarmRunState;
   readonly pauseReason?: SwarmPauseReason;
   readonly tasks: readonly SwarmTask[];

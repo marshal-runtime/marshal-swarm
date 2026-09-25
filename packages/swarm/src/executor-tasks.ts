@@ -9,9 +9,9 @@ import {
   type SwarmRunUpdateEvent,
   type SwarmTask,
   type SwarmTaskDefinition,
-  type SwarmTaskRole,
 } from "./contracts.js";
 import { parentIsLive } from "./failure-cascade.js";
+import { taskRoleLabel } from "./role-definitions.js";
 import { recordOf, requiredString, stringValue, errorText } from "./executor-values.js";
 export const TERMINAL_RUN_STATES = new Set(["completed", "failed"]);
 export interface ExecutableTask {
@@ -24,7 +24,7 @@ export interface ChildResult {
   readonly reason?: string;
   readonly resumeCount: number;
   readonly taskId: string;
-  readonly role: SwarmTaskRole;
+  readonly role: string;
   readonly result?: SwarmJsonValue;
   readonly error?: SwarmJsonValue;
   readonly changeRefs?: readonly string[];
@@ -33,7 +33,7 @@ export interface OutstandingChild {
   readonly state: SwarmTask["state"];
   readonly reason?: string;
   readonly taskId: string;
-  readonly role: SwarmTaskRole;
+  readonly role: string;
   readonly scope: string;
 }
 export interface ChildDelegation {
@@ -120,7 +120,7 @@ export function executableSwarmTasks(run: SwarmRun): readonly ExecutableTask[] {
           // The same reason after a resume is a new notification.
           resumeCount: child.resumeCount ?? 0,
           taskId: parentLocalTaskId(task.taskId, child.taskId),
-          role: child.role,
+          role: taskRoleLabel(child),
           ...(child.result === undefined ? {} : { result: child.result }),
           ...(child.error === undefined ? {} : { error: child.error }),
           ...(child.changeRefs === undefined ? {} : { changeRefs: child.changeRefs }),
@@ -131,7 +131,7 @@ export function executableSwarmTasks(run: SwarmRun): readonly ExecutableTask[] {
             state: child.state,
             reason: child.reason,
             taskId: parentLocalTaskId(task.taskId, child.taskId),
-            role: child.role,
+            role: taskRoleLabel(child),
             scope: child.scope,
           })),
       },

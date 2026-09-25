@@ -6,6 +6,7 @@ import {
   SWARM_OWNER_SESSION_BUSY_ERROR,
   SWARM_OWNER_SESSION_SUPERSEDED_ERROR,
   validateSwarmRoleModels,
+  validateSwarmRoleDefinitions,
   type SwarmRun,
   type SwarmRunUpdateEvent,
   type SwarmTaskDefinition,
@@ -23,7 +24,9 @@ import type {
   SwarmRunPauseInput,
   SwarmRunRecoverSystemFailureInput,
   SwarmRunSetRoleModelsInput,
+  SwarmRunSetRolesInput,
 } from "./types.js";
+import { resolveLaunchRole } from "./role-definitions.js";
 import {
   TERMINAL_RUN_STATES,
   isTerminalTask,
@@ -39,7 +42,6 @@ import {
   optionalCallerSessionId,
   callerWorkspace,
   optionalString,
-  requiredRole,
   optionalChangeRefs,
 } from "./executor-values.js";
 import { SwarmExecutorDrive } from "./executor-drive.js";
@@ -58,6 +60,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
       "workerReasoningEffort",
     );
     if (input.roleModels !== undefined) validateSwarmRoleModels(input.roleModels);
+    if (input.roles !== undefined) validateSwarmRoleDefinitions(input.roles);
     const roleModels: SwarmRoleModels = Object.fromEntries(
       (["planner", "reviewer", "worker", "reconciler"] as const).flatMap((role) => {
         const selection = this.resolveRoleModel(role, {
@@ -83,6 +86,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
       ...(workerModel === undefined ? {} : { workerModel }),
       ...(workerReasoningEffort === undefined ? {} : { workerReasoningEffort }),
       ...(Object.keys(roleModels).length ? { roleModels } : {}),
+      ...(input.roles === undefined ? {} : { roles: input.roles }),
     });
     await this.append(runId, [{ type: "task.added", task: root }]);
     return this.requireRun(runId);
@@ -195,7 +199,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
         const definition: SwarmTaskDefinition = {
           taskId: `${task.taskId}/${local}`,
           parentTaskId: task.taskId,
-          role: requiredRole(input.role, "role"),
+          ...resolveLaunchRole(run, input.role),
           objective: requiredString(input.objective, "objective"),
           scope: requiredString(input.scope, "scope"),
           dependencyTaskIds: optionalChangeRefs(input.dependencyTaskIds) ?? [],
@@ -207,7 +211,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
         );
         if (prior) {
           if (
-            ["taskId", "role", "objective", "scope", "dependencyTaskIds"].some(
+            ["taskId", "role", "definedRole", "objective", "scope", "dependencyTaskIds"].some(
               (k) =>
                 JSON.stringify((prior as unknown as Record<string, unknown>)[k]) !==
                 JSON.stringify((definition as unknown as Record<string, unknown>)[k]),
@@ -435,9 +439,42 @@ export class SwarmExecutor extends SwarmExecutorDrive {
     input: SwarmRunSetRoleModelsInput,
     invocation: InvocationContext,
   ): Promise<SwarmRun> {
+    return this.appendOwnerPolicy(
+      input,
+      invocation,
+      "role models",
+      () => validateSwarmRoleModels(input.roleModels),
+      (owner, reason) => ({
+        type: "run.roleModelsUpdated",
+        roleModels: input.roleModels,
+        reason,
+        ...owner,
+      }),
+    );
+  }
+  /** Adds or replaces run-defined roles for later prompts and launches. */
+  async setRoles(input: SwarmRunSetRolesInput, invocation: InvocationContext): Promise<SwarmRun> {
+    return this.appendOwnerPolicy(
+      input,
+      invocation,
+      "roles",
+      () => validateSwarmRoleDefinitions(input.roles),
+      (owner, reason) => ({ type: "run.rolesUpdated", roles: input.roles, reason, ...owner }),
+    );
+  }
+  private async appendOwnerPolicy(
+    input: SwarmRunInput & { readonly reason: string },
+    invocation: InvocationContext,
+    subject: string,
+    validate: () => void,
+    build: (
+      owner: { readonly ownerSessionId: string; readonly ownerPrincipalId: string },
+      reason: string,
+    ) => SwarmRunUpdateEvent,
+  ): Promise<SwarmRun> {
     const runId = requiredString(input.runId, "runId");
     await this.getRootAuthorized({ runId }, invocation);
-    validateSwarmRoleModels(input.roleModels);
+    validate();
     const reason = requiredString(input.reason, "reason");
     this.viewInvocations.set(runId, invocation);
     return this.withStateTransition(async () => {
@@ -449,14 +486,11 @@ export class SwarmExecutor extends SwarmExecutorDrive {
         root.ownerSessionId !== optionalCallerSessionId(invocation) ||
         root.ownerPrincipalId !== invocation.principal.id
       )
-        throw new Error("Only the original root owner may update role models.");
-      const event: SwarmRunUpdateEvent = {
-        type: "run.roleModelsUpdated",
-        roleModels: input.roleModels,
+        throw new Error(`Only the original root owner may update ${subject}.`);
+      const event = build(
+        { ownerSessionId: root.ownerSessionId, ownerPrincipalId: root.ownerPrincipalId },
         reason,
-        ownerSessionId: root.ownerSessionId,
-        ownerPrincipalId: root.ownerPrincipalId,
-      };
+      );
       replaySwarmRun([...(await this.options.eventStore.read(runId)), event]);
       await this.append(runId, [event]);
       // Policy changes never dispatch or mutate an already-created session.

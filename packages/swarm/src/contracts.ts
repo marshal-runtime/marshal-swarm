@@ -3,7 +3,9 @@ export {
   SwarmValidationError,
   validateSwarmRunEvent,
   validateSwarmRoleModels,
+  validateSwarmRoleDefinitions,
 } from "./event-validation.js";
+import { mergeRoleDefinitions, roleBaseChanges } from "./role-definitions.js";
 import {
   type SwarmJsonValue,
   type SwarmRunState,
@@ -51,6 +53,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
   let result: SwarmJsonValue | undefined;
   let error: SwarmJsonValue | undefined;
   let roleModels = first.roleModels;
+  let roles = first.roles;
   for (const [offset, raw] of events.slice(1).entries()) {
     const event = validateSwarmRunEvent(raw, offset + 1, legacy);
     if (event.type === "run.created")
@@ -58,15 +61,17 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
     switch (event.type) {
       case "run.roleModelsUpdated": {
         assertNotTerminal(state, offset + 1, event.type);
-        const root = [...tasks.values()].find((task) => task.parentTaskId === undefined);
-        if (
-          legacy ||
-          !root ||
-          root.ownerSessionId !== event.ownerSessionId ||
-          root.ownerPrincipalId !== event.ownerPrincipalId
-        )
-          throw eventError(offset + 1, "Only the original root owner may update role models.");
+        assertRootOwner(tasks, event, legacy, offset + 1, "role models");
         roleModels = { ...roleModels, ...event.roleModels };
+        break;
+      }
+      case "run.rolesUpdated": {
+        assertNotTerminal(state, offset + 1, event.type);
+        assertRootOwner(tasks, event, legacy, offset + 1, "roles");
+        const rebased = roleBaseChanges(roles, event.roles);
+        if (rebased.length)
+          throw eventError(offset + 1, `A defined role cannot change its base: ${rebased.join(", ")}.`);
+        roles = mergeRoleDefinitions(roles, event.roles);
         break;
       }
       case "run.paused":
@@ -189,6 +194,16 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
             childTaskIds: [...parent.childTaskIds, event.task.taskId],
           });
         } else if (tasks.size) throw eventError(offset + 1, "Only one root is permitted.");
+        if (
+          event.task.definedRole !== undefined &&
+          (!event.task.parentTaskId ||
+            roles?.find((definition) => definition.name === event.task.definedRole)?.base !==
+              event.task.role)
+        )
+          throw eventError(
+            offset + 1,
+            `Task "${event.task.taskId}" uses undefined role "${event.task.definedRole}".`,
+          );
         for (const id of event.task.dependencyTaskIds ?? []) requireTask(tasks, id, offset + 1);
         tasks.set(event.task.taskId, {
           ...event.task,
@@ -391,6 +406,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
       ? {}
       : { workerReasoningEffort: first.workerReasoningEffort }),
     ...(roleModels === undefined ? {} : { roleModels }),
+    ...(roles === undefined ? {} : { roles }),
     state,
     ...(state === "paused" && pauseReason ? { pauseReason } : {}),
     tasks: [...tasks.values()],
@@ -402,6 +418,22 @@ function requireTask(tasks: Map<string, SwarmTask>, id: string, index: number): 
   const task = tasks.get(id);
   if (!task) throw eventError(index, `Unknown task "${id}".`);
   return task;
+}
+function assertRootOwner(
+  tasks: ReadonlyMap<string, SwarmTask>,
+  event: { readonly ownerSessionId: string; readonly ownerPrincipalId: string },
+  legacy: boolean,
+  index: number,
+  subject: string,
+): void {
+  const root = [...tasks.values()].find((task) => task.parentTaskId === undefined);
+  if (
+    legacy ||
+    !root ||
+    root.ownerSessionId !== event.ownerSessionId ||
+    root.ownerPrincipalId !== event.ownerPrincipalId
+  )
+    throw eventError(index, `Only the original root owner may update ${subject}.`);
 }
 function hasLiveParent(tasks: ReadonlyMap<string, SwarmTask>, task: SwarmTask): boolean {
   if (task.parentTaskId === undefined) return true;

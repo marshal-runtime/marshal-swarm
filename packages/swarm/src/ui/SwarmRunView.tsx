@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { SwarmRun, SwarmTask } from "../contracts.js";
 import type { SwarmRunOutcomeSummary } from "../outcome-summary.js";
+import { taskRoleLabel } from "../role-definitions.js";
 import { summarizeUsage, type UsageMeasurement, type UsageSummary } from "./usage-summary.js";
 import { taskPurpose, taskSession, taskStatus, taskTree } from "./task-tree.js";
 
@@ -57,13 +58,13 @@ export function SwarmRunView({ run, compact, onPause, onResume, onOpenFile, onOp
             return (
               <li key={task.taskId} className="swarm-branch" style={{ marginLeft: Math.min(depth, 4) * 12 }}>
                 <button type="button" className="swarm-node" aria-current={selected?.taskId === task.taskId ? "true" : undefined}
-                  aria-label={`${task.role}: ${purpose}. ${state}. ${session && onOpenSession ? "Open agent chat" : "Show agent details"}`}
+                  aria-label={`${taskRoleLabel(task)}: ${purpose}. ${state}. ${session && onOpenSession ? "Open agent chat" : "Show agent details"}`}
                   onClick={() => { setSelectedId(task.taskId); if (session) onOpenSession?.(session); }}>
-                  <span className="flex items-center gap-2 text-xs"><strong style={{ textTransform: "capitalize" }}>{task.role}</strong><Status state={state} /></span>
+                  <span className="flex items-center gap-2 text-xs"><strong style={{ textTransform: "capitalize" }}>{taskRoleLabel(task)}</strong><Status state={state} /></span>
                   <span className="swarm-line mt-1 text-xs">{purpose}</span>
                   {(detached || depth > 4) && <span className="swarm-line mt-1 text-xs text-muted-foreground">{detached ? "Parent unavailable" : `Parent: ${taskPurpose(task.parentTaskId ?? "")}`}</span>}
                 </button>
-                {(task.artifactRefs ?? []).length > 0 && <div className="flex flex-wrap gap-2 pt-2" aria-label={`${task.role} output documents`}>
+                {(task.artifactRefs ?? []).length > 0 && <div className="flex flex-wrap gap-2 pt-2" aria-label={`${taskRoleLabel(task)} output documents`}>
                   {task.artifactRefs.map((artifact) => <button key={artifact.uri} type="button" className="swarm-artifact" disabled={!onOpenFile}
                     aria-label={`Open ${artifact.kind}: ${taskPurpose(artifact.summary || artifact.uri)}`}
                     onClick={() => onOpenFile?.(task.taskId, artifact.uri)}>
@@ -78,12 +79,15 @@ export function SwarmRunView({ run, compact, onPause, onResume, onOpenFile, onOp
         {run.tasks.length === 0 && <p className="text-xs text-muted-foreground">Waiting for agents…</p>}
       </nav>
       {selected && <details key={selected.taskId} className="text-xs" style={{ overflowWrap: "anywhere", minWidth: 0 }}>
-        <summary className="cursor-pointer">{selected.role} details · usage, executions, outputs</summary>
+        <summary className="cursor-pointer">{taskRoleLabel(selected)} details · usage, executions, outputs</summary>
         <TaskDetails task={selected} tasks={run.tasks} onSelect={setSelectedId} onOpenFile={onOpenFile} />
       </details>}
       <details className="text-xs" style={{ overflowWrap: "anywhere", minWidth: 0 }}>
         <summary className="cursor-pointer">Run details · usage and diagnostics</summary>
         <p>Run: {run.runId} · Scope: {run.scope}</p>
+        {(run.roles ?? []).length > 0 && (
+          <p>Run-defined roles: {(run.roles ?? []).map((role) => `${role.name} (${role.base}, ${role.model})`).join(" · ")}</p>
+        )}
         {run.pauseReason && <p>Blocked: {run.pauseReason.message}</p>}
         {run.error !== undefined && <p className="text-destructive">{displayJson(run.error)}</p>}
         <UsagePanel label="Run usage" summary={summarizeUsage(run.tasks.flatMap((task) => task.executions ?? []))} />
@@ -165,15 +169,17 @@ function TaskDetails({
       className="grid gap-3 rounded-md border border-border p-3"
     >
       <h3 className="text-sm font-medium">
-        {task.role}: {taskPurpose(task.objective)}
+        {taskRoleLabel(task)}: {taskPurpose(task.objective)}
       </h3>
       <p className="text-xs">
         {task.taskId} · {task.state} · Scope: {task.scope}
+        {task.definedRole !== undefined && ` · Run-defined role, base ${task.role}`}
       </p>
       {task.reason && <p className="text-sm">Reason: {task.reason}</p>}
       {task.error !== undefined && (
         <p className="text-sm text-destructive">{displayJson(task.error)}</p>
       )}
+      {task.result !== undefined && <p className="text-sm">Result: {displayJson(task.result)}</p>}
       {relationships("Parent", task.parentTaskId ? [task.parentTaskId] : [])}
       {relationships("Children", children)}
       {relationships("Dependencies", task.dependencyTaskIds ?? [])}

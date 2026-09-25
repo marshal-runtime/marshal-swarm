@@ -64,6 +64,15 @@ export function projectSwarmRunView(run: SwarmRun): SwarmRunView {
     outcome: summarizeRunOutcome(run),
     objective: purpose(run.objective),
     ...(run.pauseReason && { pauseReason: { ...run.pauseReason, message: boundedText(run.pauseReason.message) } }),
+    ...(run.roles && {
+      roles: run.roles.map((role) => ({
+        ...role,
+        whenToUse: boundedText(role.whenToUse),
+        instructions: boundedText(role.instructions),
+        ...(role.plannerGuidance !== undefined && { plannerGuidance: boundedText(role.plannerGuidance) }),
+        ...(role.resultSchema !== undefined && { resultSchema: diagnostic(role.resultSchema) }),
+      })),
+    }),
     ...(run.result !== undefined && { result: diagnostic(run.result) }),
     ...(run.error !== undefined && { error: diagnostic(run.error) }),
     tasks: run.tasks.map((task) => ({

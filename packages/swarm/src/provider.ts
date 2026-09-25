@@ -5,7 +5,11 @@ import type {
   RuntimeHostProviderSource,
 } from "@marshal/runtime";
 const RUNTIME_PROTOCOL_VERSION = "1.0.0";
-import { validateSwarmRoleModels, type SwarmRunTarget } from "./contracts.js";
+import {
+  validateSwarmRoleDefinitions,
+  validateSwarmRoleModels,
+  type SwarmRunTarget,
+} from "./contracts.js";
 import { SwarmExecutor } from "./executor.js";
 import type {
   SwarmRunCancelInput,
@@ -23,6 +27,7 @@ export const SWARM_RUNS_PAUSE = "swarm.runs.pause";
 export const SWARM_RUNS_RESUME = "swarm.runs.resume";
 export const SWARM_RUNS_RECOVER_SYSTEM_FAILURE = "swarm.runs.recoverSystemFailure";
 export const SWARM_RUNS_SET_ROLE_MODELS = "swarm.runs.setRoleModels";
+export const SWARM_RUNS_SET_ROLES = "swarm.runs.setRoles";
 export const SWARM_RUNS_DRIVE = "swarm.runs.drive";
 export type SwarmProvider = CapabilityProvider & {
   readonly executor: SwarmExecutor;
@@ -164,6 +169,20 @@ export function createSwarmProvider(
               ),
             },
           };
+        case SWARM_RUNS_SET_ROLES:
+          validateSwarmRoleDefinitions(input.roles);
+          return {
+            output: {
+              run: await executor.setRoles(
+                {
+                  ...parseRunInput(input),
+                  roles: input.roles,
+                  reason: requiredString(input.reason, "reason"),
+                },
+                invocation,
+              ),
+            },
+          };
         case SWARM_RUNS_DRIVE:
           await executor.getRootAuthorized(parseRunInput(input), invocation);
           return {
@@ -206,6 +225,25 @@ const ROLE_MODELS = {
     ]),
   ),
 } as const;
+const ROLE_DEFINITIONS = {
+  type: "array",
+  minItems: 1,
+  description:
+    "Run-defined roles. Planners launch one by name; it runs on its own model, follows its instructions, and completes with a result checked against resultSchema.",
+  items: objectSchema(
+    {
+      name: IDENTIFIER,
+      base: { type: "string", enum: ["worker", "reviewer"] },
+      model: IDENTIFIER,
+      reasoningEffort: IDENTIFIER,
+      whenToUse: IDENTIFIER,
+      instructions: IDENTIFIER,
+      plannerGuidance: IDENTIFIER,
+      resultSchema: { type: "object" },
+    },
+    ["name", "base", "model", "whenToUse", "instructions"],
+  ),
+} as const;
 const DESCRIPTORS: readonly CapabilityDescriptor[] = [
   ...[
     "list",
@@ -230,8 +268,8 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
           taskId: IDENTIFIER,
           parentTaskId: IDENTIFIER,
           role: {
-            type: "string",
-            enum: ["planner", "worker", "reconciler", "reviewer"],
+            ...IDENTIFIER,
+            description: "planner, worker, reconciler, reviewer, or a run-defined role name",
           },
           objective: IDENTIFIER,
           scope: IDENTIFIER,
@@ -240,6 +278,9 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
           dependencyTaskIds: { type: "array", items: IDENTIFIER },
           commits: { type: "array", items: IDENTIFIER },
           artifact: { type: "object" },
+          result: {
+            description: "A run-defined role's completion result, checked against its resultSchema",
+          },
         },
         required: ["runId"],
         additionalProperties: false,
@@ -335,6 +376,7 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
         workerModel: { type: "string", minLength: 1 },
         workerReasoningEffort: { type: "string", minLength: 1 },
         roleModels: ROLE_MODELS,
+        roles: ROLE_DEFINITIONS,
       },
       [],
     ),
@@ -395,6 +437,16 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
     RUN_OUTPUT,
   ),
   descriptor(
+    SWARM_RUNS_SET_ROLES,
+    "Add or replace run-defined roles for later Swarm prompts and launches without resuming",
+    objectSchema({ runId: IDENTIFIER, roles: ROLE_DEFINITIONS, reason: IDENTIFIER }, [
+      "runId",
+      "roles",
+      "reason",
+    ]),
+    RUN_OUTPUT,
+  ),
+  descriptor(
     SWARM_RUNS_RECOVER_SYSTEM_FAILURE,
     "Explicitly recover an owner-session busy transport failure into a paused run",
     objectSchema(
@@ -439,6 +491,7 @@ function descriptor(
 }
 function parseCreateInput(input: Readonly<Record<string, unknown>>): SwarmRunCreateInput {
   if (input.roleModels !== undefined) validateSwarmRoleModels(input.roleModels);
+  if (input.roles !== undefined) validateSwarmRoleDefinitions(input.roles);
   const objective =
     input.objective === undefined
       ? requiredString(input.argument, "objective")
@@ -446,6 +499,7 @@ function parseCreateInput(input: Readonly<Record<string, unknown>>): SwarmRunCre
   return {
     objective,
     ...(input.roleModels === undefined ? {} : { roleModels: input.roleModels }),
+    ...(input.roles === undefined ? {} : { roles: input.roles }),
     ...(input.runId === undefined ? {} : { runId: requiredString(input.runId, "runId") }),
     ...(input.scope === undefined ? {} : { scope: requiredString(input.scope, "scope") }),
     ...(input.fresh === undefined ? {} : { fresh: requiredBoolean(input.fresh, "fresh") }),

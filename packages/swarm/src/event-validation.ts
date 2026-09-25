@@ -1,5 +1,26 @@
-import type { SwarmJsonValue, SwarmRoleModels, SwarmRunEvent } from "./contract-types.js";
+import {
+  SWARM_DEFINED_ROLE_BASES,
+  SWARM_TASK_ROLES,
+  type SwarmJsonValue,
+  type SwarmRoleDefinition,
+  type SwarmRoleModels,
+  type SwarmRunEvent,
+} from "./contract-types.js";
 import { assertSwarmRunId } from "./contracts.js";
+import { resultSchemaProblems } from "./result-schema.js";
+const ROLE_DEFINITION_FIELDS = [
+  "name",
+  "base",
+  "model",
+  "reasoningEffort",
+  "whenToUse",
+  "instructions",
+  "plannerGuidance",
+  "resultSchema",
+];
+const ROLE_NAME_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
+const ROLE_INSTRUCTIONS_LIMIT = 32_000;
+const ROLE_SUMMARY_LIMIT = 4_000;
 export class SwarmValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -21,6 +42,7 @@ export function validateSwarmRunEvent(value: unknown, index = 0, legacy = false)
       optionalText(value, "workerModel", location);
       optionalText(value, "workerReasoningEffort", location);
       if (value.roleModels !== undefined) validateSwarmRoleModels(value.roleModels);
+      if (value.roles !== undefined) validateSwarmRoleDefinitions(value.roles);
       if (value.targets !== undefined) {
         if (!Array.isArray(value.targets) || value.targets.length === 0)
           throw new SwarmValidationError(`${location}.targets must be a non-empty array.`);
@@ -36,7 +58,9 @@ export function validateSwarmRunEvent(value: unknown, index = 0, legacy = false)
       validatePause(value.reason, location);
       break;
     case "run.roleModelsUpdated":
-      validateSwarmRoleModels(value.roleModels);
+    case "run.rolesUpdated":
+      if (value.type === "run.rolesUpdated") validateSwarmRoleDefinitions(value.roles);
+      else validateSwarmRoleModels(value.roleModels);
       for (const key of ["reason", "ownerSessionId", "ownerPrincipalId"])
         assertNonEmptyString(value[key], `${location}.${key}`);
       break;
@@ -204,6 +228,53 @@ export function validateSwarmRoleModels(value: unknown): asserts value is SwarmR
     optionalText(selection, "reasoningEffort", `roleModels.${role}`);
   }
 }
+/** Rejects run-defined roles that are malformed, duplicated, or shadow a built-in role. */
+export function validateSwarmRoleDefinitions(
+  value: unknown,
+): asserts value is readonly SwarmRoleDefinition[] {
+  if (!Array.isArray(value) || value.length === 0)
+    throw new SwarmValidationError("roles must be a non-empty array.");
+  const names = new Set<string>();
+  value.forEach((definition: unknown, index) => {
+    const location = `roles[${index}]`;
+    plain(definition, location);
+    const unknownFields = Object.keys(definition).filter(
+      (key) => !ROLE_DEFINITION_FIELDS.includes(key),
+    );
+    if (unknownFields.length)
+      throw new SwarmValidationError(`${location} has unknown fields: ${unknownFields.join(", ")}.`);
+    assertNonEmptyString(definition.name, `${location}.name`);
+    if (
+      !ROLE_NAME_PATTERN.test(definition.name) ||
+      (SWARM_TASK_ROLES as readonly string[]).includes(definition.name)
+    )
+      throw new SwarmValidationError(
+        `${location}.name must be 1-40 lowercase letters, digits, or hyphens starting with a letter, and must not be a built-in role.`,
+      );
+    if (names.has(definition.name))
+      throw new SwarmValidationError(`${location}.name "${definition.name}" is defined twice.`);
+    names.add(definition.name);
+    if (!(SWARM_DEFINED_ROLE_BASES as readonly unknown[]).includes(definition.base))
+      throw new SwarmValidationError(`${location}.base must be ${SWARM_DEFINED_ROLE_BASES.join(" or ")}.`);
+    for (const key of ["model", "whenToUse", "instructions"])
+      assertNonEmptyString(definition[key], `${location}.${key}`);
+    optionalText(definition, "reasoningEffort", location);
+    optionalText(definition, "plannerGuidance", location);
+    assertTextLimit(definition.instructions, ROLE_INSTRUCTIONS_LIMIT, `${location}.instructions`);
+    assertTextLimit(definition.whenToUse, ROLE_SUMMARY_LIMIT, `${location}.whenToUse`);
+    if (definition.plannerGuidance !== undefined)
+      assertTextLimit(definition.plannerGuidance, ROLE_SUMMARY_LIMIT, `${location}.plannerGuidance`);
+    if ("resultSchema" in definition) {
+      json(definition.resultSchema, `${location}.resultSchema`);
+      const problems = resultSchemaProblems(definition.resultSchema, `${location}.resultSchema`);
+      if (problems.length) throw new SwarmValidationError(problems.join(" "));
+    }
+  });
+}
+function assertTextLimit(value: unknown, limit: number, location: string): void {
+  if (typeof value === "string" && value.length > limit)
+    throw new SwarmValidationError(`${location} exceeds ${limit} characters.`);
+}
 export function validateTask(value: unknown, location: string): void {
   plain(value, location);
   assertNonEmptyString(value.taskId, `${location}.taskId`);
@@ -212,8 +283,14 @@ export function validateTask(value: unknown, location: string): void {
   optionalText(value, "idempotencyKey", location);
   optionalText(value, "ownerSessionId", location);
   optionalText(value, "ownerPrincipalId", location);
+  optionalText(value, "definedRole", location);
   if (!["planner", "worker", "reconciler", "reviewer"].includes(String(value.role)))
     throw new SwarmValidationError(`${location}.role is invalid.`);
+  if (
+    value.definedRole !== undefined &&
+    !(SWARM_DEFINED_ROLE_BASES as readonly unknown[]).includes(value.role)
+  )
+    throw new SwarmValidationError(`${location}.role must be the base role of its defined role.`);
   assertNonEmptyString(value.objective, `${location}.objective`);
   assertNonEmptyString(value.scope, `${location}.scope`);
 }

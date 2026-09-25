@@ -1,5 +1,5 @@
 import type { InvocationContext } from "@marshal/runtime";
-import type { SwarmPauseReason, SwarmTaskRole } from "./contracts.js";
+import type { SwarmPauseReason } from "./contracts.js";
 export const RUNTIME_PROTOCOL_VERSION = "1.0.0";
 export const REVIEWER_CONTRACT_MESSAGE =
   'Reviewer results must be structured as {"reviewed":true,"findings":[...]}. ' +
@@ -49,17 +49,6 @@ export function callerWorkspace(invocation: InvocationContext): string | undefin
 export function optionalString(value: unknown, label: string): string | undefined {
   if (value === undefined) return undefined;
   return requiredString(value, label);
-}
-export function requiredRole(value: unknown, label: string): SwarmTaskRole {
-  switch (value) {
-    case "planner":
-    case "worker":
-    case "reconciler":
-    case "reviewer":
-      return value;
-    default:
-      throw new TypeError(`${label} must be planner, worker, reconciler, or reviewer.`);
-  }
 }
 export function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
