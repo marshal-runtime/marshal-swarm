@@ -1,6 +1,8 @@
 import {
+  SWARM_COMPLETION_TOOLS,
   SWARM_DEFINED_ROLE_BASES,
   SWARM_TASK_ROLES,
+  SWARM_WORKSPACE_MODES,
   type SwarmJsonValue,
   type SwarmRoleDefinition,
   type SwarmRoleModels,
@@ -17,6 +19,9 @@ const ROLE_DEFINITION_FIELDS = [
   "instructions",
   "plannerGuidance",
   "resultSchema",
+  "systemPrompt",
+  "tools",
+  "workspaceMode",
 ];
 const ROLE_NAME_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 const ROLE_INSTRUCTIONS_LIMIT = 32_000;
@@ -269,7 +274,24 @@ export function validateSwarmRoleDefinitions(
       const problems = resultSchemaProblems(definition.resultSchema, `${location}.resultSchema`);
       if (problems.length) throw new SwarmValidationError(problems.join(" "));
     }
+    optionalText(definition, "systemPrompt", location);
+    assertTextLimit(definition.systemPrompt, ROLE_INSTRUCTIONS_LIMIT, `${location}.systemPrompt`);
+    if ("tools" in definition) validateRoleTools(definition.tools, `${location}.tools`);
+    if (
+      "workspaceMode" in definition &&
+      !(SWARM_WORKSPACE_MODES as readonly unknown[]).includes(definition.workspaceMode)
+    )
+      throw new SwarmValidationError(`${location}.workspaceMode must be ${SWARM_WORKSPACE_MODES.join(" or ")}.`);
   });
+}
+function validateRoleTools(value: unknown, location: string): void {
+  if (!Array.isArray(value) || value.length === 0)
+    throw new SwarmValidationError(`${location} must be a non-empty array of host tool names.`);
+  value.forEach((item, index) => assertNonEmptyString(item, `${location}[${index}]`));
+  if (!value.some((item) => SWARM_COMPLETION_TOOLS.includes(item)))
+    throw new SwarmValidationError(
+      `${location} must include ${SWARM_COMPLETION_TOOLS.join(" or ")} so the node can call swarm.nodes.complete.`,
+    );
 }
 function assertTextLimit(value: unknown, limit: number, location: string): void {
   if (typeof value === "string" && value.length > limit)
@@ -280,6 +302,7 @@ export function validateTask(value: unknown, location: string): void {
   assertNonEmptyString(value.taskId, `${location}.taskId`);
   optionalText(value, "parentTaskId", location);
   optionalTextArray(value, "dependencyTaskIds", location);
+  optionalTextArray(value, "attachments", location);
   optionalText(value, "idempotencyKey", location);
   optionalText(value, "ownerSessionId", location);
   optionalText(value, "ownerPrincipalId", location);

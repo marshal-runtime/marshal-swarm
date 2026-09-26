@@ -10,11 +10,15 @@ const BASE_RULES: Readonly<Record<SwarmDefinedRoleBase, readonly string[]>> = {
     "Write output files outside the repository checkout, at the paths your instructions name, so your worktree stays clean.",
   ],
 };
+const SHARED_WORKSPACE_RULE =
+  "You run in a shared checkout: do not edit repository files, commit, or run Git commands that change it.";
 /** Role contract lines for a task launched as a run-defined role. */
 export function definedRoleContract(definition: SwarmRoleDefinition): readonly string[] {
+  const [workspaceRule, ...baseRules] = BASE_RULES[definition.base];
   return [
     `You are the run-defined role "${definition.name}" (base ${definition.base}). The agent that launched this swarm wrote the instructions below for this run; follow them over generic ${definition.base} guidance.`,
-    ...BASE_RULES[definition.base],
+    definition.workspaceMode === "shared" ? SHARED_WORKSPACE_RULE : workspaceRule,
+    ...baseRules,
     "",
     "### Instructions",
     "",
@@ -44,6 +48,7 @@ export function plannerDefinedRolesSection(run: Pick<SwarmRun, "roles">): string
       `- Base: ${role.base}; model: ${role.model}${role.reasoningEffort ? `; effort: ${role.reasoningEffort}` : ""}`,
       `- When to use: ${role.whenToUse}`,
       ...(role.plannerGuidance ? [`- How to use: ${role.plannerGuidance}`] : []),
+      ...sessionLines(role),
       ...(role.resultSchema === undefined
         ? []
         : [`- Result schema: ${JSON.stringify(role.resultSchema)}`]),
@@ -51,8 +56,18 @@ export function plannerDefinedRolesSection(run: Pick<SwarmRun, "roles">): string
     ]),
   ];
 }
+function sessionLines(role: SwarmRoleDefinition): string[] {
+  const parts = [
+    ...(role.systemPrompt === undefined
+      ? []
+      : ["its own system prompt; its task message holds only the objective, so put every input in the objective or attachments"]),
+    ...(role.tools === undefined ? [] : [`tools ${role.tools.join(", ")}`]),
+    ...(role.workspaceMode === undefined ? [] : [`${role.workspaceMode} workspace`]),
+  ];
+  return parts.length ? [`- Session: ${parts.join("; ")}`] : [];
+}
 function resultContract(definition: SwarmRoleDefinition): string[] {
-  const commits = definition.base === "worker" ? ",commits?" : "";
+  const commits = definition.base === "worker" && definition.workspaceMode !== "shared" ? ",commits?" : "";
   const artifact =
     definition.base === "reviewer"
       ? ["Before completing, publish your findings file with swarm.nodes.publishArtifact as kind review."]

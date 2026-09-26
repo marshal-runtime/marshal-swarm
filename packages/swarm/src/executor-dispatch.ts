@@ -9,6 +9,7 @@ import {
 } from "./contracts.js";
 import {
   completionProblems,
+  taskLaunchProfile,
   taskRoleDefinition,
   taskRoleLabel,
   withIntegrationWarning,
@@ -267,7 +268,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       delegationId: delegationKey,
       scope: task.scope,
       role: task.role,
-      workspaceMode: task.role === "planner" ? "shared" : "isolated",
+      ...taskLaunchProfile(definition, task),
       ...(roleModel?.model === undefined ? {} : { model: roleModel.model }),
       ...(roleModel?.reasoningEffort === undefined
         ? {}

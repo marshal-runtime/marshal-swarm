@@ -43,6 +43,7 @@ import {
   callerWorkspace,
   optionalString,
   optionalChangeRefs,
+  optionalAttachments,
 } from "./executor-values.js";
 import { SwarmExecutorDrive } from "./executor-drive.js";
 export class SwarmExecutor extends SwarmExecutorDrive {
@@ -196,6 +197,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
         const local = requiredString(input.taskId, "taskId");
         if (!/^[A-Za-z0-9._-]+$/.test(local))
           throw new Error("Child taskId must be a local identifier.");
+        const attachments = optionalAttachments(input.attachments);
         const definition: SwarmTaskDefinition = {
           taskId: `${task.taskId}/${local}`,
           parentTaskId: task.taskId,
@@ -203,6 +205,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
           objective: requiredString(input.objective, "objective"),
           scope: requiredString(input.scope, "scope"),
           dependencyTaskIds: optionalChangeRefs(input.dependencyTaskIds) ?? [],
+          ...(attachments === undefined ? {} : { attachments }),
           idempotencyKey: key,
           createdAt: new Date().toISOString(),
         };
@@ -211,7 +214,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
         );
         if (prior) {
           if (
-            ["taskId", "role", "definedRole", "objective", "scope", "dependencyTaskIds"].some(
+            ["taskId", "role", "definedRole", "objective", "scope", "dependencyTaskIds", "attachments"].some(
               (k) =>
                 JSON.stringify((prior as unknown as Record<string, unknown>)[k]) !==
                 JSON.stringify((definition as unknown as Record<string, unknown>)[k]),

@@ -21,7 +21,17 @@ export interface SwarmRoleDefinition {
   readonly instructions: string;
   readonly plannerGuidance?: string;
   readonly resultSchema?: SwarmJsonValue;
+  /** Replaces the host system prompt for this role's sessions and makes the task message lean. */
+  readonly systemPrompt?: string;
+  /** Host tool allowlist for this role's sessions. */
+  readonly tools?: readonly string[];
+  /** Workspace for this role's sessions; isolated when unset. */
+  readonly workspaceMode?: SwarmWorkspaceMode;
 }
+export type SwarmWorkspaceMode = "shared" | "isolated";
+export const SWARM_WORKSPACE_MODES: readonly SwarmWorkspaceMode[] = ["shared", "isolated"];
+/** Host tools through which a node can reach swarm.nodes.complete. */
+export const SWARM_COMPLETION_TOOLS: readonly string[] = ["runtimeInvoke", "runtimeExecuteTypeScript"];
 export type SwarmRoleModels = Readonly<
   Partial<
     Record<
@@ -58,6 +68,8 @@ export interface SwarmTaskDefinition {
   readonly objective: string;
   readonly scope: string;
   readonly dependencyTaskIds?: readonly string[];
+  /** Absolute paths of local files attached to the node's launch prompt. */
+  readonly attachments?: readonly string[];
   readonly idempotencyKey?: string;
   readonly ownerSessionId?: string;
   readonly ownerPrincipalId?: string;

@@ -61,15 +61,30 @@ The agent that creates a run can define extra roles in `swarm.runs.create`
 `roles`. Each definition has a `name`, a built-in `base` (`worker` or
 `reviewer`), a `model`, an optional `reasoningEffort`, `whenToUse`,
 `instructions`, optional `plannerGuidance`, and an optional `resultSchema`.
+A definition can also shape its sessions: `systemPrompt`, `tools` and
+`workspaceMode`.
 
 - Planners see a "Run-defined roles" section and launch a defined role by
   name in `swarm.nodes.launch` `role`. The task keeps the base role in `role`
   and stores the defined name in `definedRole`.
 - The definition model and effort override the base role model for that task.
 - The task prompt adds the definition instructions to the base role contract.
-  Tools are the scripts that the instructions name; the package adds no tool
-  allowlist. A `reviewer` base stays read-only and inspects a named change ref
-  with `git checkout --detach <ref>` in its own worktree.
+  A `reviewer` base stays read-only and inspects a named change ref with
+  `git checkout --detach <ref>` in its own worktree.
+- `systemPrompt` replaces the host system prompt for the role's sessions. The
+  task message then becomes lean: the role header, identity, objective,
+  instructions, result contract and completion call. It has no run objective,
+  Field Guide, sibling roster or launch interface, so the planner puts every
+  input in the objective or in attachments.
+- `tools` is the host tool allowlist for the role's sessions. It must include
+  `runtimeInvoke` or `runtimeExecuteTypeScript`, the tools that reach
+  `swarm.nodes.complete`. Without `tools` the session keeps the default tools.
+- `workspaceMode` `shared` runs the role in the shared checkout instead of an
+  isolated worktree. A shared role must not change the checkout and cannot
+  complete with `commits`.
+- `swarm.nodes.launch` accepts `attachments`: absolute paths of local files,
+  such as images, that the host attaches to the child's first message. They
+  are part of the launch identity for idempotent relaunches.
 - A defined role completes with `swarm.nodes.complete` `result`. The executor
   validates the result against `resultSchema` before host finalization and
   rejects an invalid result with the problems to fix. The result must stay

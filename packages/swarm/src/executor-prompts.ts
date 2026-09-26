@@ -1,4 +1,10 @@
-import { swarmRunTargets, type SwarmRun, type SwarmTask, type SwarmTaskRole } from "./contracts.js";
+import {
+  swarmRunTargets,
+  type SwarmRoleDefinition,
+  type SwarmRun,
+  type SwarmTask,
+  type SwarmTaskRole,
+} from "./contracts.js";
 import type { SwarmBaseline, SwarmSharedContext } from "./services.js";
 import {
   type ExecutableTask,
@@ -21,6 +27,7 @@ export function promptFor(
 ): string {
   const task = ready.task;
   const definition = taskRoleDefinition(run, task);
+  if (definition?.systemPrompt !== undefined) return leanPromptFor(task, run, definition);
   const childOutcomes = ready.childResults.map((child) => ({
     state: child.state,
     ...(child.reason === undefined ? {} : { reason: child.reason }),
@@ -98,12 +105,34 @@ export function promptFor(
     'These are broker capability names, not an ambient swarm object or separate native tools. Invoke them through runtimeInvoke({capability: "swarm.nodes.<operation>", input: {...}}). For runtimeExecuteTypeScript, use: export default async (input, context) => context.runtime.invoke("swarm.nodes.<operation>", input); Pass the capability arguments as the tool input. The second function argument is a context containing runtime; invoke takes the capability name and input as two positional arguments and returns the capability output directly.',
     'For discovery, use runtimeSearch({name: "swarm.nodes.<operation>"}) with the exact capability name. A failure in unrelated catalog search does not imply this capability is unavailable; direct invocation remains the supported path for known capabilities.',
     `Your durable identity is runId=${run.runId}, taskId=${task.taskId}.`,
-    "Launch input: {runId,parentTaskId,taskId,role,objective,scope,dependencyTaskIds?,idempotencyKey}. taskId is parent-local. Only planners may launch children; child scope must be a declared repository." +
+    "Launch input: {runId,parentTaskId,taskId,role,objective,scope,dependencyTaskIds?,attachments?,idempotencyKey}. taskId is parent-local. attachments are absolute paths of local files, such as images, attached to the child's first message. Only planners may launch children; child scope must be a declared repository." +
       (run.roles?.length && task.role === "planner" ? " role may also be a run-defined role name." : ""),
     "Before completing, publish an artifact reference through swarm.nodes.publishArtifact with {runId,taskId,artifact:{uri,kind,summary}}. Required artifact kinds: planner uses plan, decision, or report; reviewer uses review; reconciler uses reconciliation. Write a readable decision/action/rationale summary to that file; never publish hidden chain-of-thought. An inline artifact passed to swarm.nodes.complete does not publish a reference.",
     `Complete explicitly with ${definition ? "the input your Result section names" : "{runId,taskId,commits?:string[]}; code output is a simple commits list"}. If the task needs another conversation turn, request it before ending the current turn with swarm.nodes.continue {runId,taskId,reason}; this may be repeated without a fixed turn limit. Block or fail with {runId,taskId,reason}. Blocked work resumes only after explicit resume with a resolution reason.`,
     "Do not call swarm.nodes.continue to wait for children: the runtime automatically wakes this node when a direct child completes, fails, or blocks. continue is only for requesting another turn of your own work now, never for polling or waiting on outstanding children.",
     "Your final conversational response does not launch children or complete this task. Pending children start once dependencies complete. Inspect sibling ownership and publish shared decisions before dependent work.",
+  ].join("\n");
+}
+/** The task message for a role with its own system prompt: its task only, without run context. */
+function leanPromptFor(task: SwarmTask, run: SwarmRun, definition: SwarmRoleDefinition): string {
+  return [
+    "# Current swarm task",
+    "",
+    `- Role: ${definedRoleHeader(definition)}`,
+    `- Identity: runId=${run.runId}, taskId=${task.taskId}`,
+    "",
+    "## Objective",
+    "",
+    task.objective,
+    "",
+    "## Role contract",
+    "",
+    ...definedRoleContract(definition),
+    "",
+    "## Response interface",
+    "",
+    `Complete through runtimeInvoke({capability: "swarm.nodes.complete", input: {runId: "${run.runId}", taskId: "${task.taskId}", result}}), or through runtimeExecuteTypeScript with context.runtime.invoke("swarm.nodes.complete", input).`,
+    "If you cannot do the task, call swarm.nodes.fail with {runId, taskId, reason} the same way. Your final conversational response does not complete this task.",
   ].join("\n");
 }
 export function siblingRosterSection(task: SwarmTask, run: SwarmRun): string[] {

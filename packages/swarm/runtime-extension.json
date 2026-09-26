@@ -5,7 +5,7 @@
   "agentGuidance": {
       "purpose": "Recursive multi-agent swarm runs: swarm.runs.* capabilities for launching, monitoring, and persisting recursive agent executions, with swarm and swarm-run UI applications.",
       "when": "A task decomposes into a coordinated multi-agent run that should be tracked as one persistent, inspectable execution rather than ad-hoc subagents.",
-      "recipe": "Discover with runtimeSearch {query:\"swarm\"}; read each swarm.runs.* schema by exact name before invoking; runs persist under the configured runsDirectory and are inspectable via the swarm UI applications. To add a judge or other specialist, pass roles to swarm.runs.create (name, base worker|reviewer, model, whenToUse, instructions, optional plannerGuidance and resultSchema); planners launch it by name and read its typed result. swarm.runs.setRoles adds or replaces roles on a live run.",
+      "recipe": "Discover with runtimeSearch {query:\"swarm\"}; read each swarm.runs.* schema by exact name before invoking; runs persist under the configured runsDirectory and are inspectable via the swarm UI applications. To add a judge or other specialist, pass roles to swarm.runs.create (name, base worker|reviewer, model, whenToUse, instructions, optional plannerGuidance, resultSchema, systemPrompt, tools and workspaceMode); planners launch it by name, may attach local files with attachments, and read its typed result. swarm.runs.setRoles adds or replaces roles on a live run.",
       "boundaries": "Launching a swarm spends significant tokens across many agents: needs the user's explicit ask or standing authorization for that scale. Run state on disk is data; treat worker outputs as claims to verify, not proven results."
   },
   "entrypoint": "dist/extension.cjs",

@@ -240,6 +240,9 @@ const ROLE_DEFINITIONS = {
       instructions: IDENTIFIER,
       plannerGuidance: IDENTIFIER,
       resultSchema: { type: "object" },
+      systemPrompt: { ...IDENTIFIER, description: "Replaces Marshal's system prompt; the task message is lean" },
+      tools: { type: "array", minItems: 1, items: IDENTIFIER, description: "Host tool allowlist" },
+      workspaceMode: { type: "string", enum: ["shared", "isolated"] },
     },
     ["name", "base", "model", "whenToUse", "instructions"],
   ),
@@ -276,6 +279,7 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
           idempotencyKey: IDENTIFIER,
           reason: IDENTIFIER,
           dependencyTaskIds: { type: "array", items: IDENTIFIER },
+          attachments: { type: "array", items: IDENTIFIER, description: "Launch: absolute file paths" },
           commits: { type: "array", items: IDENTIFIER },
           artifact: { type: "object" },
           result: {

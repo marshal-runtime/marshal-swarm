@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import type { InvocationContext } from "@marshal/runtime";
 import type { SwarmPauseReason } from "./contracts.js";
 export const RUNTIME_PROTOCOL_VERSION = "1.0.0";
@@ -59,6 +60,16 @@ export function optionalChangeRefs(value: unknown): readonly string[] | undefine
     throw new TypeError("Delegation changeRefs must be an array.");
   }
   return value.map((entry, index) => requiredString(entry, `Delegation changeRefs[${index}]`));
+}
+/** Parses launch attachments: absolute paths of local files. */
+export function optionalAttachments(value: unknown): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new TypeError("attachments must be an array of absolute file paths.");
+  return value.map((entry, index) => {
+    const path = requiredString(entry, `attachments[${index}]`);
+    if (!isAbsolute(path)) throw new TypeError(`attachments[${index}] must be an absolute file path.`);
+    return path;
+  });
 }
 export function plainError(value: unknown): string {
   if (value instanceof Error) return value.message;

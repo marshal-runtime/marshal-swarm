@@ -71,7 +71,9 @@ export function completionProblems(
   const problems =
     definition.base === "reviewer" && commits.length
       ? [`Role "${definition.name}" is read-only (base reviewer) and cannot complete with commits.`]
-      : [];
+      : definition.workspaceMode === "shared" && commits.length
+        ? [`Role "${definition.name}" runs in a shared checkout and cannot complete with commits.`]
+        : [];
   if (result === undefined)
     return definition.resultSchema === undefined
       ? problems
@@ -84,6 +86,18 @@ export function completionProblems(
   return definition.resultSchema === undefined
     ? problems
     : [...problems, ...resultValueProblems(result, definition.resultSchema)];
+}
+/** Delegation launch fields a task adds: its role's workspace, prompt override and tools, and its attachments. */
+export function taskLaunchProfile(
+  definition: SwarmRoleDefinition | undefined,
+  task: Pick<SwarmTaskDefinition, "role" | "attachments">,
+): Readonly<Record<string, SwarmJsonValue>> {
+  return {
+    workspaceMode: definition?.workspaceMode ?? (task.role === "planner" ? "shared" : "isolated"),
+    ...(definition?.systemPrompt === undefined ? {} : { systemPrompt: definition.systemPrompt }),
+    ...(definition?.tools === undefined ? {} : { tools: [...definition.tools] }),
+    ...(task.attachments === undefined ? {} : { attachments: [...task.attachments] }),
+  };
 }
 /** Adds a host integration warning to a completion result without discarding either. */
 export function withIntegrationWarning(
