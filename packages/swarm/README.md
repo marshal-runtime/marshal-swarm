@@ -159,10 +159,17 @@ A failed or cancelled task leaves no live work beneath it: the executor appends
 `task.cancelled` for every pending, running, or blocked descendant in the same
 write and cancels their running delegations. The one exception is the root's
 owner-session transport failure (busy/superseded), whose children are kept for
-`swarm.runs.recoverSystemFailure`. The journal refuses `task.dispatched` and
-`task.started` under a failed or completed parent, and refuses `run.resumed`
-after `run.failed`/`run.cancelled`; a failed run re-enters only through audited
-recovery, which leaves it paused.
+`swarm.runs.recoverSystemFailure`. The journal refuses `task.dispatched`,
+`task.redispatched` and `task.started` under a failed or completed parent, and
+refuses `run.resumed` after `run.failed`/`run.cancelled`; a failed run re-enters
+only through audited recovery, which leaves it paused.
+
+A launch that the runtime refuses for the environment (for example a full disk)
+is recorded as `refused`, so a resume launches under a fresh key instead of
+replaying the refusal. That fresh launch, and the replacement of a planner whose
+completion the runtime rejected, is journaled as `task.redispatched`. Idle
+reminders and runtime failures apply only to the task attempt they observed; a
+task that moved on in the meantime skips them.
 
 ## Local development
 

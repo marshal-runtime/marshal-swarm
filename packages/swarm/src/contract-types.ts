@@ -97,7 +97,7 @@ export interface SwarmExecutionRecord {
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly launchInput?: Readonly<Record<string, SwarmJsonValue>>;
-  readonly dispatchState?: "registered" | "dispatched";
+  readonly dispatchState?: "registered" | "dispatched" | "refused";
   readonly delegationId?: string;
   readonly sessionId?: string;
   readonly transcriptRef?: string;
@@ -219,7 +219,7 @@ export type SwarmRunEvent =
       readonly artifact: SwarmArtifactReference;
     }
   | {
-      readonly type: "task.execution" | "task.dispatched";
+      readonly type: "task.execution" | "task.dispatched" | "task.redispatched";
       readonly taskId: string;
       readonly execution: SwarmExecutionRecord;
     }

@@ -24,6 +24,7 @@ const ROLE_DEFINITION_FIELDS = [
   "workspaceMode",
 ];
 const ROLE_NAME_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
+const DISPATCH_STATES = ["registered", "dispatched", "refused"];
 const ROLE_INSTRUCTIONS_LIMIT = 32_000;
 const ROLE_SUMMARY_LIMIT = 4_000;
 export class SwarmValidationError extends Error {
@@ -123,12 +124,20 @@ export function validateSwarmRunEvent(value: unknown, index = 0, legacy = false)
         throw new SwarmValidationError("Invalid artifact kind.");
       break;
     case "task.dispatched":
+    case "task.redispatched":
     case "task.execution":
       assertNonEmptyString(value.taskId, `${location}.taskId`);
       plain(value.execution, location);
       assertNonEmptyString(value.execution.executionId, "executionId");
       for (const key of ["delegationId", "sessionId", "transcriptRef", "model", "reasoningEffort"])
         optionalText(value.execution, key, location);
+      if (value.type === "task.redispatched")
+        assertNonEmptyString(value.execution.delegationId, `${location}.execution.delegationId`);
+      if (
+        value.execution.dispatchState !== undefined &&
+        !DISPATCH_STATES.includes(String(value.execution.dispatchState))
+      )
+        throw new SwarmValidationError("Invalid dispatch state.");
       if (value.execution.usage !== undefined) validateUsage(value.execution.usage, location);
       if (value.execution.usageByModel !== undefined) {
         if (!Array.isArray(value.execution.usageByModel))

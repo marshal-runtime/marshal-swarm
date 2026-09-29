@@ -109,6 +109,15 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       );
       return "launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch;
     }
+    if (task.executions.at(-1)?.dispatchState === "refused" && task.delegationId)
+      return this.redispatchRunningTask(
+        runId,
+        ready,
+        task.delegationId,
+        prompt,
+        baseline,
+        invocation,
+      );
     const delegationId = requiredString(task.delegationId, `Task "${task.taskId}" delegationId`);
     if (task.resumeReason) {
       const continued = await this.continueAgent(
@@ -149,7 +158,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         if (ready.outstanding.length > 0) {
           return { ready, error: DESCENDANT_INTEGRATION_REJECTION };
         }
-        return this.replaceRejectedPlanner(
+        return this.redispatchRunningTask(
           runId,
           ready,
           delegationId,
@@ -174,10 +183,11 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
     }
     return { ready, delegationId };
   }
-  protected replaceRejectedPlanner(
+  /** Gives a running task a fresh launch key when its delegation was refused or rejected. */
+  protected redispatchRunningTask(
     runId: string,
     ready: ExecutableTask,
-    rejectedDelegationId: string,
+    staleDelegationId: string,
     prompt: string,
     baseline: SwarmBaseline | undefined,
     invocation: InvocationContext,
@@ -198,7 +208,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
           error: `Task "${ready.task.taskId}" is no longer executable.`,
         };
       }
-      if (currentTask.delegationId !== rejectedDelegationId) {
+      if (currentTask.delegationId !== staleDelegationId) {
         return {
           ready: { ...ready, task: currentTask },
           delegationId: currentTask.delegationId,
@@ -279,10 +289,11 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         ? { backend: callerSession }
         : {}),
     };
+    const fresh = task.state === "pending";
     if (!reserved)
       await this.append(runId, [
         {
-          type: "task.dispatched",
+          type: fresh ? "task.dispatched" : "task.redispatched",
           taskId: task.taskId,
           execution: {
             executionId,
@@ -295,6 +306,15 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
             ...(roleModel?.reasoningEffort ? { reasoningEffort: roleModel.reasoningEffort } : {}),
           },
         },
+        ...(fresh || ready.childResults.length === 0
+          ? []
+          : [
+              {
+                type: "task.childrenNotified" as const,
+                taskId: task.taskId,
+                signature: childAttentionSignature(ready),
+              },
+            ]),
       ]);
     return {
       runId,
@@ -315,6 +335,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
     const spawnError = delegation?.error ?? spawned.error;
     const pauseReason = pauseReasonForError(spawnError, task.taskId);
     if (pauseReason !== undefined) {
+      await this.markDispatchRefused(runId, task.taskId, executionId);
       return {
         ready,
         error: errorText(
@@ -364,6 +385,26 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
     return recordedTask
       ? { ready: { ...ready, task: recordedTask }, delegationId }
       : { ready, error: `Task "${task.taskId}" stopped while dispatching.` };
+  }
+  /** Marks a refused reserved dispatch, so the next launch reserves a fresh key. */
+  protected markDispatchRefused(runId: string, taskId: string, executionId: string): Promise<void> {
+    return this.withStateTransition(async () => {
+      const reserved = (await this.requireRun(runId)).tasks
+        .find((entry) => entry.taskId === taskId)
+        ?.executions.at(-1);
+      if (reserved?.executionId !== executionId || reserved.dispatchState !== "registered") return;
+      await this.append(runId, [
+        {
+          type: "task.execution",
+          taskId,
+          execution: {
+            ...reserved,
+            dispatchState: "refused",
+            completedAt: new Date().toISOString(),
+          },
+        },
+      ]);
+    });
   }
   protected async completeNode(
     runId: string,

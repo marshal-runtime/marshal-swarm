@@ -133,7 +133,7 @@ export class SwarmExecutorCore {
     error: string,
     changeRefs?: readonly string[],
   ): Promise<void> {
-    await this.appendWhileRunning(runId, [
+    await this.appendForTaskAttempt(runId, task, [
       {
         type: "task.failed",
         taskId: task.taskId,
@@ -226,6 +226,26 @@ export class SwarmExecutorCore {
     return this.withStateTransition(async () => {
       if ((await this.requireRun(runId)).state !== "running") return;
       await this.append(runId, events);
+    });
+  }
+  /** Appends only while the run runs and the task holds the observed attempt; false when skipped. */
+  protected appendForTaskAttempt(
+    runId: string,
+    observed: SwarmTask,
+    events: readonly SwarmRunUpdateEvent[],
+  ): Promise<boolean> {
+    return this.withStateTransition(async () => {
+      const run = await this.requireRun(runId);
+      const task = run.tasks.find((entry) => entry.taskId === observed.taskId);
+      if (
+        run.state !== "running" ||
+        task?.state !== observed.state ||
+        task.delegationId !== observed.delegationId ||
+        task.resumeCount !== observed.resumeCount
+      )
+        return false;
+      await this.append(runId, events);
+      return true;
     });
   }
   protected pauseRun(

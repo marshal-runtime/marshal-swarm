@@ -174,11 +174,7 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
           return;
         this.heldContinuations.delete(key);
         this.heldWakeups.add(key);
-        await this.drive({ runId }, invocation);
-        // If idle arrived during the preceding drive's final await, consume the
-        // still-pending wake in a fresh drive. A consumed wake never dispatches twice.
-        if (this.heldWakeups.has(key) && !(await this.stopped(runId)))
-          await this.drive({ runId }, invocation);
+        await this.driveAfterHeldWake(runId, key, invocation);
       })
       .catch(async (error: unknown) => {
         // A stale pause/cancellation observer cannot fail a newer task attempt.
@@ -201,6 +197,25 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
     void waiting.catch((error: unknown) =>
       console.warn("Held continuation recovery failed.", error),
     );
+  }
+  /** Drives after a held owner went idle; a drive failure is never the held task's failure. */
+  protected async driveAfterHeldWake(
+    runId: string,
+    key: string,
+    invocation: InvocationContext,
+  ): Promise<void> {
+    try {
+      await this.drive({ runId }, invocation);
+      // If idle arrived during the preceding drive's final await, consume the
+      // still-pending wake in a fresh drive. A consumed wake never dispatches twice.
+      if (this.heldWakeups.has(key) && !(await this.stopped(runId)))
+        await this.drive({ runId }, invocation);
+    } catch (error) {
+      console.warn(
+        "Swarm drive after a held continuation failed; the held task keeps its state.",
+        error instanceof Error ? error.message.slice(0, 512) : "Unknown drive failure",
+      );
+    }
   }
   protected async settleTask(
     runId: string,
@@ -318,7 +333,7 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
       (child) => child.parentTaskId === task.taskId && !isTerminalTask(child),
     );
     if (!liveChildren && (task.idleReminders ?? 0) >= 2) {
-      await this.appendWhileRunning(runId, [
+      await this.appendForTaskAttempt(runId, task, [
         {
           type: "task.blocked",
           taskId: task.taskId,
@@ -341,7 +356,9 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
           invocation,
         );
         if (continued?.continuationDelivery === "held") return true;
-        await this.appendWhileRunning(runId, [{ type: "task.reminded", taskId: task.taskId }]);
+        await this.appendForTaskAttempt(runId, task, [
+          { type: "task.reminded", taskId: task.taskId },
+        ]);
       }
     }
     // A conversational final answer is telemetry only. Lifecycle changes require

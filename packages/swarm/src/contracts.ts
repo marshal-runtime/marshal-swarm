@@ -351,6 +351,23 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
         });
         break;
       }
+      case "task.redispatched": {
+        const task = requireTask(tasks, event.taskId, offset + 1);
+        if (task.state !== "running")
+          throw eventError(offset + 1, "Only running tasks can be dispatched again.");
+        if (task.executions.some((e) => e.executionId === event.execution.executionId))
+          throw eventError(offset + 1, "A new dispatch needs a new execution.");
+        if (!legacy && !hasLiveParent(tasks, task))
+          throw eventError(offset + 1, "Parent task is no longer live.");
+        tasks.set(task.taskId, {
+          ...task,
+          delegationId: event.execution.delegationId,
+          executions: [...task.executions, event.execution],
+          resumeReason: undefined,
+          idleReminders: 0,
+        });
+        break;
+      }
       case "task.execution": {
         const task = requireTask(tasks, event.taskId, offset + 1);
         tasks.set(task.taskId, {
