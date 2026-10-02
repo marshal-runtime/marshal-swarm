@@ -62,6 +62,8 @@ export interface ReservedTaskDispatch {
 }
 export interface AgentOutcome {
   readonly continuationHeld?: boolean;
+  /** The wait ended without an agent result for this attempt; the engine records nothing. */
+  readonly stale?: boolean;
   readonly ready: ExecutableTask;
   readonly result?: unknown;
   readonly changeRefs?: readonly string[];

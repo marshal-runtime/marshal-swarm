@@ -24,6 +24,14 @@ import {
   diskFullPauseReason,
 } from "./executor-values.js";
 import { SwarmExecutorDispatch } from "./executor-dispatch.js";
+import {
+  DEFAULT_STALL_PROBE_MS,
+  STALL_REMINDER_LIMIT,
+  STALLED_BLOCK_REASON,
+  STALLED_TURN_PROMPT,
+  type StallProbeStop,
+  waitWithStallProbe,
+} from "./stall-probe.js";
 /** The drive loop: selecting executable tasks, settling agents and recording outcomes. */
 export class SwarmExecutorDrive extends SwarmExecutorDispatch {
   drive(input: SwarmRunInput, invocation: InvocationContext): Promise<SwarmRun> {
@@ -258,9 +266,17 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
       return { ready, error: "Run stopped." };
     }
     if (launch.continuationHeld) return { ready, continuationHeld: true };
+    const delegationId = launch.delegationId;
     let delegation: Readonly<Record<string, unknown>> | undefined;
     try {
-      delegation = await this.waitForAgent(launch.delegationId, invocation);
+      const waited = await waitWithStallProbe(
+        this.waitForAgent(delegationId, invocation),
+        this.options.stallProbeMs ?? DEFAULT_STALL_PROBE_MS,
+        () => this.probeStalledTask(runId, ready, delegationId, invocation),
+      );
+      if ("stop" in waited)
+        return waited.stop === "failed" ? { ready, error: waited.error } : { ready, stale: true };
+      delegation = waited.value;
     } catch (error) {
       const pauseReason = pauseReasonForError(error, ready.task.taskId);
       if (pauseReason !== undefined) {
@@ -311,8 +327,35 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
       ...(changeRefs === undefined ? {} : { changeRefs }),
     };
   }
+  /** Nudges an idle agent whose wait is still pending; returns a stop when the wait must end. */
+  protected async probeStalledTask(
+    runId: string,
+    ready: ExecutableTask,
+    delegationId: string,
+    invocation: InvocationContext,
+  ): Promise<StallProbeStop | undefined> {
+    const run = await this.requireRun(runId);
+    const task = run.tasks.find((entry) => entry.taskId === ready.task.taskId);
+    if (run.state !== "running" || task?.state !== "running" || task.delegationId !== delegationId)
+      return { stop: "stale" };
+    if ((task.idleReminders ?? 0) >= STALL_REMINDER_LIMIT) {
+      await this.appendForTaskAttempt(runId, task, [
+        { type: "task.blocked", taskId: task.taskId, reason: STALLED_BLOCK_REASON },
+      ]);
+      return { stop: "stale" };
+    }
+    const continued = await this.continueAgent(delegationId, STALLED_TURN_PROMPT, invocation);
+    if (continued?.continuationDelivery === "held") return undefined;
+    if (continued?.error !== undefined || stringValue(continued?.state) === "failed")
+      return {
+        stop: "failed",
+        error: errorText(continued?.error, `Stalled agent for task "${task.taskId}" could not continue.`),
+      };
+    await this.appendForTaskAttempt(runId, task, [{ type: "task.reminded", taskId: task.taskId }]);
+    return undefined;
+  }
   protected async recordOutcome(runId: string, outcome: AgentOutcome): Promise<boolean | void> {
-    if (await this.stopped(runId)) return;
+    if (outcome.stale || (await this.stopped(runId))) return;
     const run = await this.requireRun(runId);
     const task = run.tasks.find((entry) => entry.taskId === outcome.ready.task.taskId);
     if (task === undefined || task.state === "completed" || task.state === "failed") {

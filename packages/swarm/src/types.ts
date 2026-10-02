@@ -52,6 +52,8 @@ export interface SwarmSourceOptions {
   readonly eventStore: SwarmRunEventStore;
   readonly providerId?: string;
   readonly serviceContainer?: SwarmServiceContainer;
+  /** Interval between stall probes of a pending agent wait; defaults to ten minutes. */
+  readonly stallProbeMs?: number;
 }
 
 export interface SwarmExecutionContext {

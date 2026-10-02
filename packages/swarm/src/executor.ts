@@ -173,6 +173,7 @@ export class SwarmExecutor extends SwarmExecutorDrive {
       this.wakeDrive(runId, this.viewInvocations.get(runId) ?? invocation);
       return output;
     }
+    let cancelledChildDelegationId: string | undefined;
     const output = await this.withStateTransition(async () => {
       const run = await this.requireRun(runId);
       const caller = this.callerTask(run, invocation);
@@ -186,11 +187,26 @@ export class SwarmExecutor extends SwarmExecutorDrive {
       if (run.legacyReadOnly)
         throw new Error("Legacy runs are read-only. Start a new explicit-protocol run.");
       if (run.state !== "running") throw new Error("Run is not running.");
+      const parentCancel =
+        name === "fail" && caller.taskId !== task.taskId && caller.taskId === task.parentTaskId;
       if (
         caller.taskId !== task.taskId &&
-        !(name === "resume" && caller.taskId === task.parentTaskId)
+        !(name === "resume" && caller.taskId === task.parentTaskId) &&
+        !parentCancel
       )
         throw new Error("Only the owning task may change this node.");
+      if (parentCancel) {
+        if (isTerminalTask(task)) throw new Error("Only a live child can be cancelled.");
+        await this.append(runId, [
+          {
+            type: "task.cancelled",
+            taskId,
+            error: `Cancelled by parent task "${caller.taskId}": ${requiredString(input.reason, "reason")}`,
+          },
+        ]);
+        if (task.state === "running") cancelledChildDelegationId = task.delegationId;
+        return (await this.requireRun(runId)).tasks.find((t) => t.taskId === taskId);
+      }
       if (name === "launch") {
         if (task.role !== "planner") throw new Error("Role cannot launch children.");
         const key = requiredString(input.idempotencyKey, "idempotencyKey");
@@ -279,6 +295,9 @@ export class SwarmExecutor extends SwarmExecutorDrive {
         } satisfies SwarmNodeAck;
       return finalTask;
     });
+    const ownerInvocation = this.viewInvocations.get(runId) ?? invocation;
+    if (cancelledChildDelegationId)
+      void this.cancelAgent(cancelledChildDelegationId, ownerInvocation).catch(() => undefined);
     await this.finishRun(runId);
     if (
       name === "launch" ||

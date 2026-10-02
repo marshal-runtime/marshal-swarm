@@ -153,7 +153,9 @@ Read access never promotes an outsider to run or task ownership. Pause,
 resume, cancel, drive, role-model updates, and recovery require the original
 root owner; task lifecycle writes retain their owning-task authorization.
 Completion requires an explicit `swarm.nodes.complete` call, after any required
-artifact publication; conversational output does not complete a task.
+artifact publication; conversational output does not complete a task. A parent
+may also call `swarm.nodes.fail` on a live direct child: the child gets
+`task.cancelled` with the parent's reason, and its delegation is cancelled.
 
 A failed or cancelled task leaves no live work beneath it: the executor appends
 `task.cancelled` for every pending, running, or blocked descendant in the same
@@ -170,6 +172,13 @@ replaying the refusal. That fresh launch, and the replacement of a planner whose
 completion the runtime rejected, is journaled as `task.redispatched`. Idle
 reminders and runtime failures apply only to the task attempt they observed; a
 task that moved on in the meantime skips them.
+
+A wait for an agent's turn can stay pending while the agent is idle, for
+example when a host restart cut the turn off before any reply. Every
+`stallProbeMs` (default ten minutes) the executor sends such a task a
+continuation. A busy agent does not receive it, so a live turn is never disturbed. An
+accepted continuation counts as an idle reminder; after two reminders the task
+blocks. A continuation that fails ends the attempt as a runtime failure.
 
 ## Local development
 

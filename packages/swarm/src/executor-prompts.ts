@@ -170,6 +170,7 @@ export function outstandingSection(outstanding: readonly OutstandingChild[]): st
     "These direct children are still live. You may react to the outcomes above " +
       "and delegate more work, but you may not complete while any child remains " +
       "outstanding. Blocked children need your decision or resolution; inspect their reason and use swarm.nodes.resume only once it is resolved. " +
+      'To abandon a live child that cannot finish (blocked without a resolution, idle or no longer needed), call swarm.nodes.fail with {runId, taskId: "<your taskId>/<child taskId>", reason}; it cancels that child and its descendants. ' +
       "Each entry is compact (taskId, role, scope, state, reason); fetch a " +
       "child's full objective via swarm.nodes.get({runId,taskId}) if you need it.",
     JSON.stringify(outstanding),
