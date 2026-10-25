@@ -92,6 +92,7 @@ export interface SwarmArtifactReference {
   readonly kind: "plan" | "decision" | "review" | "reconciliation" | "report";
 }
 export interface SwarmExecutionRecord {
+  readonly promptReceipt?: SwarmPromptReceipt;
   readonly executionId: string;
   readonly kind?: "dispatch" | "turn";
   readonly startedAt?: string;
@@ -124,6 +125,13 @@ export interface SwarmNodeAck {
   readonly state: SwarmTaskState;
   readonly resumeCount: number;
 }
+/** Hashes of context and outcomes actually delivered to the current delegation. */
+export interface SwarmPromptReceipt {
+  readonly context: string;
+  readonly attention: string;
+  readonly guides: Readonly<Record<string, string>>;
+  readonly children: Readonly<Record<string, string>>;
+}
 export interface SwarmTask extends SwarmTaskDefinition {
   readonly state: SwarmTaskState;
   readonly childTaskIds: readonly string[];
@@ -134,6 +142,7 @@ export interface SwarmTask extends SwarmTaskDefinition {
   readonly resumeReason?: string;
   readonly resumeCount?: number;
   readonly childAttentionSignature?: string;
+  readonly promptReceipt?: SwarmPromptReceipt;
   readonly delegationId?: string;
   readonly result?: SwarmJsonValue;
   readonly error?: SwarmJsonValue;
@@ -231,6 +240,7 @@ export type SwarmRunEvent =
       readonly type: "task.childrenNotified";
       readonly taskId: string;
       readonly signature: string;
+      readonly promptReceipt?: SwarmPromptReceipt;
     }
   | {
       readonly type: "task.started";

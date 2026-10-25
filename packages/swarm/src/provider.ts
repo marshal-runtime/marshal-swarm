@@ -270,6 +270,12 @@ const DESCRIPTORS: readonly CapabilityDescriptor[] = [
           runId: IDENTIFIER,
           taskId: IDENTIFIER,
           parentTaskId: IDENTIFIER,
+          ...(name === "list" || name === "get" ? {
+            view: { type: "string", enum: ["full", "summary", "result"],
+              description: "Use summary for paged rosters; result for full task evidence and role contract without execution history; full retains legacy readback." },
+            offset: { type: "integer", minimum: 0, description: "Summary list page offset" },
+            limit: { type: "integer", minimum: 1, maximum: 100, description: "Summary list page size; default 50" },
+          } : {}),
           role: {
             ...IDENTIFIER,
             description: "planner, worker, reconciler, reviewer, or a run-defined role name",

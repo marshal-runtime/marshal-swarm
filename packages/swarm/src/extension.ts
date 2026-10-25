@@ -91,7 +91,7 @@ const extension: RuntimeExtensionModule = {
     return {
       capabilityProviders: [provider],
       uiApplications: [ui, slash],
-      uiPlacements: [
+      uiPlacements: context.configuration.presentation === "headless" ? [] : [
         {
           placementId: SWARM_RUN_NAVIGATION_PLACEMENT_ID,
           applicationId: SWARM_RUN_APPLICATION_ID,

@@ -9,6 +9,7 @@ import {
   type SwarmRunUpdateEvent,
   type SwarmTask,
   type SwarmTaskDefinition,
+  type SwarmPromptReceipt,
 } from "./contracts.js";
 import { parentIsLive } from "./failure-cascade.js";
 import { taskRoleLabel } from "./role-definitions.js";
@@ -48,6 +49,7 @@ export interface AgentLaunch {
   readonly pauseReason?: SwarmPauseReason;
 }
 export interface ReservedTaskDispatch {
+  readonly promptReceipt?: SwarmPromptReceipt;
   readonly runId: string;
   readonly ready: ExecutableTask;
   readonly task: SwarmTask;

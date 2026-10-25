@@ -21,10 +21,17 @@ completion signal. This repeats until the root completes; topology has no fixed
 fan-out, depth, or stages. A root failure fails the run without an executor retry
 or requeue.
 
-Every launch receives the current content and absolute path of one shared Field
-Guide. Role prompts use it only for concise durable decisions, blockers, and
-surprising facts, including megafile signals and intentional-break rationale.
-The package adds no parallel ledger or event type for that context.
+Initial and replacement launches receive the objective, role contract, and
+current Field Guide references. Guide content has an 8,000-character inline
+budget; larger files must be read from their absolute paths before acting.
+Continuation messages carry only changed child outcomes and changed guide
+entries, with bounded result previews (2,000 characters each, 12,000 total).
+Full evidence remains available through `swarm.nodes.get` with `view: "result"`,
+which includes the role contract and omits saved execution prompts. Use
+`swarm.nodes.list` with `view: "summary"`, `parentTaskId`, `offset`, and `limit`
+for paged rosters. The default full readback remains available for compatibility.
+Delivery hashes are saved in existing notification events only after accepted
+delivery, so held/rejected messages and process restarts cannot lose updates.
 
 Runtime owns the event stream and its replay. The executor has one transition
 path for all roles and settles in-flight tasks independently: each outcome is
@@ -194,3 +201,16 @@ corepack pnpm@10.32.1 test
 The test suite includes a loader smoke test that copies the packed extension
 payload, verifies its integrity, activates it through the Runtime package
 loader, and disposes it without Swarm-specific host wiring.
+
+### Gateways without native Marshal navigation
+
+Install this same extension normally with configuration `{ runsDirectory,
+presentation: "headless" }`. Capabilities and readable UI/evidence resources remain
+published, while native navigation and slash-command placements are omitted. The
+Runtime host must set `extensions.uiPlacementsRequired: false` when it exposes
+resources without navigation. Native presentation remains the default.
+
+Swarm uses the host's Runtime workspace path or workspace identity when
+`marshalWorkspaceName` is absent. A gateway must implement Runtime delegation;
+installing this package alone does not provide agent execution. Active native
+agents follow the gateway's execution lifetime and recovery guarantees.

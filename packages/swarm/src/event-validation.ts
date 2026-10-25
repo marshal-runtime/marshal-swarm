@@ -104,6 +104,7 @@ export function validateSwarmRunEvent(value: unknown, index = 0, legacy = false)
     case "task.childrenNotified":
       assertNonEmptyString(value.taskId, `${location}.taskId`);
       assertNonEmptyString(value.signature, `${location}.signature`);
+      if (value.promptReceipt !== undefined) validatePromptReceipt(value.promptReceipt);
       break;
     case "task.continued":
     case "task.reminded":
@@ -128,6 +129,7 @@ export function validateSwarmRunEvent(value: unknown, index = 0, legacy = false)
     case "task.execution":
       assertNonEmptyString(value.taskId, `${location}.taskId`);
       plain(value.execution, location);
+      if (value.execution.promptReceipt !== undefined) validatePromptReceipt(value.execution.promptReceipt);
       assertNonEmptyString(value.execution.executionId, "executionId");
       for (const key of ["delegationId", "sessionId", "transcriptRef", "model", "reasoningEffort"])
         optionalText(value.execution, key, location);
@@ -379,6 +381,16 @@ export function plain(value: unknown, location: string): asserts value is Record
 export function assertNonEmptyString(value: unknown, location: string): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0)
     throw new SwarmValidationError(`${location} must be a non-empty string.`);
+}
+function validatePromptReceipt(value: unknown): void {
+  plain(value, "promptReceipt");
+  for (const key of ["context", "attention"])
+    assertNonEmptyString(value[key], `promptReceipt.${key}`);
+  for (const key of ["guides", "children"]) {
+    plain(value[key], `promptReceipt.${key}`);
+    for (const hash of Object.values(value[key]))
+      assertNonEmptyString(hash, `promptReceipt.${key} hash`);
+  }
 }
 export function eventError(index: number, message: string): SwarmValidationError {
   return new SwarmValidationError(`Event ${index + 1}: ${message}`);
