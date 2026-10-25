@@ -365,6 +365,7 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
           executions: [...task.executions, event.execution],
           resumeReason: undefined,
           idleReminders: 0,
+          promptReceipt: undefined,
         });
         break;
       }
@@ -381,7 +382,11 @@ export function replaySwarmRun(events: readonly unknown[]): SwarmRun {
       }
       case "task.childrenNotified": {
         const task = requireTask(tasks, event.taskId, offset + 1);
-        tasks.set(task.taskId, { ...task, childAttentionSignature: event.signature });
+        tasks.set(task.taskId, {
+          ...task,
+          childAttentionSignature: event.signature,
+          ...(event.promptReceipt === undefined ? {} : { promptReceipt: event.promptReceipt }),
+        });
         break;
       }
       case "task.continued": {

@@ -16,7 +16,7 @@ import {
 } from '../src/presentation.js';
 
 describe('packed Runtime extension', () => {
-  it('loads and disposes without Swarm services or configuration', async () => {
+  it.each(['native', 'headless'])('loads and disposes through normal activation on a %s host', async (presentation) => {
     const root = mkdtempSync(path.join(process.cwd(), '.tmp-loader-'));
     try {
     const packageRoot = path.join(root, 'package');
@@ -39,7 +39,7 @@ describe('packed Runtime extension', () => {
     }).load(request);
     const activation = await loaded.module.activate({
       manifest: loaded.metadata.manifest,
-      configuration: { runsDirectory: path.join(root, 'runs') },
+      configuration: { runsDirectory: path.join(root, 'runs'), presentation },
       services: { tryGet: () => undefined, get: () => { throw new Error('not used'); }, getAll: () => [] },
       search: async () => ({ matches: [] }),
       execute: async () => { throw new Error('not used'); },
@@ -57,7 +57,8 @@ describe('packed Runtime extension', () => {
           JSON.stringify(['mobile', 'desktop']),
       ),
     ).toBe(true);
-    expect(activation.uiPlacements).toContainEqual({
+    if (presentation === 'headless') expect(activation.uiPlacements).toEqual([]);
+    else expect(activation.uiPlacements).toContainEqual({
       placementId: SWARM_RUN_NAVIGATION_PLACEMENT_ID,
       applicationId: SWARM_RUN_APPLICATION_ID,
       action: 'augment',
