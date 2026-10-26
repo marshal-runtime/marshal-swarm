@@ -39,13 +39,15 @@ export function optionalCallerSessionId(invocation: InvocationContext): string |
 }
 export function callerWorkspace(invocation: InvocationContext): string | undefined {
   const metadata = invocation.metadata;
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+    return invocation.scope?.workspacePath ?? invocation.scope?.workspaceId;
   const name = (
     metadata as {
       marshalWorkspaceName?: unknown;
     }
   ).marshalWorkspaceName;
-  return typeof name === "string" && name.trim() ? name.trim() : undefined;
+  return typeof name === "string" && name.trim() ? name.trim()
+    : invocation.scope?.workspacePath ?? invocation.scope?.workspaceId;
 }
 export function optionalString(value: unknown, label: string): string | undefined {
   if (value === undefined) return undefined;

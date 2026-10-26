@@ -96,6 +96,7 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
         if (
           !ready.task.resumeReason &&
           ready.childResults.length > 0 &&
+          !["registered", "refused"].includes(ready.task.executions.at(-1)?.dispatchState ?? "") &&
           ready.task.childAttentionSignature === childAttentionSignature(ready)
         )
           continue;
@@ -134,6 +135,14 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
       }
       if (await this.recordOutcome(runId, settled.outcome)) {
         this.waitForHeldContinuation(runId, settled.outcome.ready, invocation);
+      }
+      if (!settled.outcome.error && !settled.outcome.continuationHeld && settled.outcome.ready.childResults.length) {
+        const currentTask = (await this.requireRun(runId)).tasks.find((task) => task.taskId === settled.taskId);
+        // A recovered registered dispatch may contain an older child snapshot.
+        // Deliver the remaining delta in this drive instead of counting it as idle.
+        if (currentTask?.state === "running" &&
+          currentTask.childAttentionSignature !== childAttentionSignature(settled.outcome.ready))
+          surfaced.delete(settled.taskId);
       }
       await this.finishRun(runId);
     }
@@ -329,6 +338,8 @@ export class SwarmExecutorDrive extends SwarmExecutorDispatch {
       return;
     }
     if (task.state !== "running" || task.resumeCount !== outcome.ready.task.resumeCount) return;
+    if (outcome.ready.childResults.length &&
+      task.childAttentionSignature !== childAttentionSignature(outcome.ready)) return;
     const liveChildren = run.tasks.some(
       (child) => child.parentTaskId === task.taskId && !isTerminalTask(child),
     );

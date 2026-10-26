@@ -46,6 +46,7 @@ import {
   optionalAttachments,
 } from "./executor-values.js";
 import { SwarmExecutorDrive } from "./executor-drive.js";
+import { nodeResultView, nodeSummaryView, nodeReadPage } from "./node-readback.js";
 export class SwarmExecutor extends SwarmExecutorDrive {
   async create(input: SwarmRunCreateInput, invocation: InvocationContext): Promise<SwarmRun> {
     const objective = requiredString(input.objective, "objective");
@@ -160,11 +161,23 @@ export class SwarmExecutor extends SwarmExecutorDrive {
     const runId = requiredString(input.runId, "runId");
     if (name === "list" || name === "get") {
       const run = await this.getAuthorized({ runId }, invocation);
-      if (name === "list") return run.tasks;
+      if (input.view !== undefined && input.view !== "full" && input.view !== "summary" && input.view !== "result")
+        throw new TypeError("Node view must be full, summary, or result.");
+      if (name === "list") {
+        const tasks = input.parentTaskId === undefined ? run.tasks :
+          run.tasks.filter((task) => task.parentTaskId === requiredString(input.parentTaskId, "parentTaskId"));
+        if (input.view === "summary") {
+          const { offset, limit } = nodeReadPage(input);
+          return tasks.slice(offset, offset + limit).map(nodeSummaryView);
+        }
+        return tasks;
+      }
       const task = run.tasks.find(
         (entry) => entry.taskId === requiredString(input.taskId, "taskId"),
       );
       if (!task) throw new Error("Unknown task.");
+      if (input.view === "summary") return nodeSummaryView(task);
+      if (input.view === "result") return nodeResultView(task, run);
       return task;
     }
     if (name === "complete") {

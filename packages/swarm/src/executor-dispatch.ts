@@ -6,6 +6,7 @@ import {
   type SwarmRun,
   type SwarmRunUpdateEvent,
   type SwarmTask,
+  type SwarmPromptReceipt,
 } from "./contracts.js";
 import {
   completionProblems,
@@ -39,6 +40,7 @@ import {
   pauseReasonForError,
 } from "./executor-values.js";
 import { promptFor } from "./executor-prompts.js";
+import { promptReceiptFor } from "./prompt-context.js";
 import { SwarmExecutorCore } from "./executor-core.js";
 /** Reserving, dispatching and launching task agents, and node completion. */
 export class SwarmExecutorDispatch extends SwarmExecutorCore {
@@ -60,6 +62,14 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       task.scope,
     );
     const prompt = promptFor(ready, fieldGuide, run, baseline);
+    const fullPrompt = () => promptFor(ready, fieldGuide, run, baseline, true);
+    const promptReceipt = promptReceiptFor(ready, fieldGuide, run);
+    const notification = {
+      type: "task.childrenNotified" as const,
+      taskId: task.taskId,
+      signature: childAttentionSignature(ready),
+      promptReceipt,
+    };
     if (task.state === "pending") {
       const dispatch = await this.withStateTransition(async () => {
         const currentRun = await this.requireRun(runId);
@@ -87,9 +97,10 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
           currentRun,
           ready,
           currentTask,
-          prompt,
+          fullPrompt(),
           baseline,
           invocation,
+          promptReceipt,
         );
       });
       return "launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch;
@@ -103,9 +114,10 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         run,
         ready,
         task,
-        prompt,
+        fullPrompt(),
         baseline,
         invocation,
+        promptReceipt,
       );
       return "launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch;
     }
@@ -114,9 +126,10 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         runId,
         ready,
         task.delegationId,
-        prompt,
+        fullPrompt(),
         baseline,
         invocation,
+        promptReceipt,
       );
     const delegationId = requiredString(task.delegationId, `Task "${task.taskId}" delegationId`);
     if (task.resumeReason) {
@@ -125,20 +138,13 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         `Explicit task resolution: ${task.resumeReason}\n${prompt}`,
         invocation,
       );
-      if (continued?.error) return launchFailure(ready, continued, undefined, "continue");
+      if (continued?.error || stringValue(continued?.delegationId) !== delegationId)
+        return launchFailure(ready, continued, undefined, "continue");
       if (continued?.continuationDelivery === "held")
         return { ready, delegationId, continuationHeld: true };
       await this.appendWhileRunning(runId, [
         { type: "task.continued", taskId: task.taskId },
-        ...(ready.childResults.length
-          ? [
-              {
-                type: "task.childrenNotified" as const,
-                taskId: task.taskId,
-                signature: childAttentionSignature(ready),
-              },
-            ]
-          : []),
+        notification,
       ]);
       return { ready, delegationId };
     }
@@ -162,9 +168,10 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
           runId,
           ready,
           delegationId,
-          prompt,
+          fullPrompt(),
           baseline,
           invocation,
+          promptReceipt,
         );
       }
       if (continued?.continuationDelivery === "held")
@@ -173,11 +180,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         return launchFailure(ready, continued, undefined, "continue");
       }
       await this.appendWhileRunning(runId, [
-        {
-          type: "task.childrenNotified",
-          taskId: task.taskId,
-          signature: childAttentionSignature(ready),
-        },
+        notification,
       ]);
       return { ready, delegationId };
     }
@@ -191,6 +194,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
     prompt: string,
     baseline: SwarmBaseline | undefined,
     invocation: InvocationContext,
+    promptReceipt?: SwarmPromptReceipt,
   ): Promise<AgentLaunch> {
     return this.withStateTransition(async () => {
       const currentRun = await this.requireRun(runId);
@@ -222,6 +226,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
         prompt,
         baseline,
         invocation,
+        promptReceipt,
       );
     }).then((dispatch) => ("launchInput" in dispatch ? this.dispatchTask(dispatch) : dispatch));
   }
@@ -233,6 +238,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
     prompt: string,
     baseline: SwarmBaseline | undefined,
     invocation: InvocationContext,
+    promptReceipt?: SwarmPromptReceipt,
   ): Promise<ReservedTaskDispatch | AgentLaunch> {
     const parentDelegationId =
       task.parentTaskId === undefined
@@ -301,20 +307,12 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
             dispatchState: "registered",
             startedAt: new Date().toISOString(),
             launchInput,
+            promptReceipt,
             delegationId: delegationKey,
             ...(roleModel?.model ? { model: roleModel.model } : {}),
             ...(roleModel?.reasoningEffort ? { reasoningEffort: roleModel.reasoningEffort } : {}),
           },
         },
-        ...(fresh || ready.childResults.length === 0
-          ? []
-          : [
-              {
-                type: "task.childrenNotified" as const,
-                taskId: task.taskId,
-                signature: childAttentionSignature(ready),
-              },
-            ]),
       ]);
     return {
       runId,
@@ -324,6 +322,7 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
       executionId,
       launchInput,
       startedAt: reserved?.startedAt ?? new Date().toISOString(),
+      promptReceipt: reserved?.promptReceipt ?? (reserved ? undefined : promptReceipt),
       ...(roleModel === undefined ? {} : { roleModel }),
     };
   }
@@ -379,6 +378,12 @@ export class SwarmExecutorDispatch extends SwarmExecutorCore {
             ...(roleModel?.reasoningEffort ? { reasoningEffort: roleModel.reasoningEffort } : {}),
           },
         },
+        ...(dispatch.promptReceipt === undefined ? [] : [{
+          type: "task.childrenNotified" as const,
+          taskId: task.taskId,
+          signature: dispatch.promptReceipt.attention,
+          promptReceipt: dispatch.promptReceipt,
+        }]),
       ]);
       return (await this.requireRun(runId)).tasks.find((entry) => entry.taskId === task.taskId);
     });

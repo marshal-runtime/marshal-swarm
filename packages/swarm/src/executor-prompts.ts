@@ -19,30 +19,41 @@ import {
   definedRoleHeader,
   plannerDefinedRolesSection,
 } from "./role-definition-prompts.js";
+import { promptReceiptFor, changedChildResults, childOutcomeSection, guideUpdateSection } from "./prompt-context.js";
 export function promptFor(
   ready: ExecutableTask,
   fieldGuide: SwarmSharedContext,
   run: SwarmRun,
   baseline?: SwarmBaseline,
+  fresh = ready.task.state === "pending",
 ): string {
   const task = ready.task;
   const definition = taskRoleDefinition(run, task);
-  if (definition?.systemPrompt !== undefined) return leanPromptFor(task, run, definition);
-  const childOutcomes = ready.childResults.map((child) => ({
-    state: child.state,
-    ...(child.reason === undefined ? {} : { reason: child.reason }),
-    taskId: child.taskId,
-    role: child.role,
-    ...(child.result === undefined ? {} : { result: child.result }),
-    ...(child.error === undefined ? {} : { error: child.error }),
-    changeRefs: child.changeRefs ?? [],
-  }));
-  const fieldGuidePath = requiredString(fieldGuide.path, "Field Guide path");
+  requiredString(fieldGuide.path, "Field Guide path");
   if (typeof fieldGuide.content !== "string") {
     throw new TypeError("Field Guide content must be a string.");
   }
+  for (const topic of fieldGuide.topics ?? []) {
+    requiredString(topic.path, "Field Guide topic path");
+    if (typeof topic.content !== "string") throw new TypeError("Field Guide topic content must be a string.");
+  }
+  const receipt = promptReceiptFor(ready, fieldGuide, run);
+  const children = changedChildResults(ready, receipt, fresh);
+  const outcomes = childOutcomeSection(children, run, ready);
+  const guides = definition?.systemPrompt !== undefined ? [] :
+    guideUpdateSection(fieldGuide, receipt, task.promptReceipt, fresh);
+  if (!fresh && (!task.promptReceipt || task.promptReceipt.context === receipt.context)) {
+    return ["# Swarm task update", "",
+      `- Identity: runId=${run.runId}, taskId=${task.taskId}`,
+      ...(baseline ? [`- Latest integration baseline: ${baseline.ref} (${baseline.head})`] : []),
+      'Continue the assigned objective and role contract from this conversation. Retrieve them with swarm.nodes.get({runId,taskId,view:"result"}) if needed after compaction.',
+      ...outcomes, ...siblingRosterSection(task, run), ...outstandingSection(ready.outstanding), ...guides,
+      "Use swarm.nodes.continue only for another turn of your own work; child outcomes wake you automatically. Complete explicitly through swarm.nodes.complete after satisfying the role contract.",
+    ].join("\n");
+  }
+  if (definition?.systemPrompt !== undefined) return [leanPromptFor(task, run, definition), ...outcomes].join("\n");
   const nodePosition = task.parentTaskId === undefined ? "root" : "descendant";
-  const turnPhase = childOutcomes.length === 0 ? "initial" : "resumed with direct child outcomes";
+  const turnPhase = fresh ? "initial" : "updated task context";
   const scopeTarget = swarmRunTargets(run).find((target) => target.scope === task.scope);
   const targetRef = scopeTarget?.ref ?? run.targetRef ?? "not recorded";
   const targetHead = scopeTarget?.head ?? run.targetHead ?? "not recorded";
@@ -57,10 +68,6 @@ export function promptFor(
     `- Original target head: ${targetHead}`,
     `- Latest integration baseline ref: ${baseline?.ref ?? "not resolved"}`,
     `- Latest integration baseline head: ${baseline?.head ?? "not resolved"}`,
-    `- Baseline ref: ${baseline?.ref ?? "not resolved"}`,
-    `- Baseline head: ${baseline?.head ?? "not resolved"}`,
-    `- Scope target ref: ${targetRef}`,
-    `- Scope target head: ${targetHead}`,
     "",
     ...(task.parentTaskId === undefined
       ? []
@@ -76,24 +83,10 @@ export function promptFor(
     "",
     task.objective,
     "",
-    "## Direct child outcomes",
-    "",
-    JSON.stringify(childOutcomes),
-    "",
+    ...outcomes,
     ...siblingRosterSection(task, run),
     ...outstandingSection(ready.outstanding),
-    "## Shared Field Guide",
-    "",
-    `- Absolute path: ${fieldGuidePath}`,
-    "",
-    "--- FIELD GUIDE START ---",
-    fieldGuide.content,
-    "--- FIELD GUIDE END ---",
-    "",
-    ...topicSections(fieldGuide),
-    "Read the Field Guide for concise durable design decisions and surprising repository facts.",
-    "Only the planner ownership rules below permit editing any Field Guide file.",
-    "",
+    ...guides,
     ...(task.role === "planner" ? plannerDefinedRolesSection(run) : []),
     "## Role contract",
     "",
@@ -102,6 +95,7 @@ export function promptFor(
     "## Response interface",
     "",
     "Use the TypeScript runtime capabilities swarm.nodes.list/get/launch/publishArtifact/block/fail/complete/continue/resume for all task lifecycle changes.",
+    'For reads, use swarm.nodes.list({runId,parentTaskId,view:"summary",offset:0,limit:50}) for paged rosters and swarm.nodes.get({runId,taskId,view:"result"}) for full evidence and role contracts without saved execution prompts. Advance offset by 50 while a list page is full. The default full view includes execution history and can be very large.',
     'These are broker capability names, not an ambient swarm object or separate native tools. Invoke them through runtimeInvoke({capability: "swarm.nodes.<operation>", input: {...}}). For runtimeExecuteTypeScript, use: export default async (input, context) => context.runtime.invoke("swarm.nodes.<operation>", input); Pass the capability arguments as the tool input. The second function argument is a context containing runtime; invoke takes the capability name and input as two positional arguments and returns the capability output directly.',
     'For discovery, use runtimeSearch({name: "swarm.nodes.<operation>"}) with the exact capability name. A failure in unrelated catalog search does not imply this capability is unavailable; direct invocation remains the supported path for known capabilities.',
     `Your durable identity is runId=${run.runId}, taskId=${task.taskId}.`,
@@ -157,7 +151,7 @@ export function siblingRosterSection(task: SwarmTask, run: SwarmRun): string[] {
       "interface or exported symbol another sibling owns; defer any shared " +
       "contract to your nearest common planner. Each entry is compact " +
       "(taskId, role, scope, state); fetch a sibling's full objective via " +
-      "swarm.nodes.get({runId,taskId}) if you need it.",
+      'swarm.nodes.get({runId,taskId,view:"result"}) if you need it.',
     JSON.stringify(roster),
     "",
   ];
@@ -171,7 +165,7 @@ export function outstandingSection(outstanding: readonly OutstandingChild[]): st
       "and delegate more work, but you may not complete while any child remains " +
       "outstanding. Blocked children need your decision or resolution; inspect their reason and use swarm.nodes.resume only once it is resolved. " +
       "Each entry is compact (taskId, role, scope, state, reason); fetch a " +
-      "child's full objective via swarm.nodes.get({runId,taskId}) if you need it.",
+      'child\'s full objective via swarm.nodes.get({runId,taskId,view:"result"}) if you need it.',
     JSON.stringify(outstanding),
     "",
   ];
